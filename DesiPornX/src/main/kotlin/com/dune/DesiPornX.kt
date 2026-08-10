@@ -17,21 +17,22 @@ class DesiPornX : MainAPI() {
     override val vpnStatus = VPNStatus.MightBeNeeded
 
     override val mainPage = mainPageOf(
-        "$mainUrl/videos" to "Newest",
-        "$mainUrl/videos?sort=most_viewed" to "Most Viewed",
-        "$mainUrl/videos?sort=top_rated" to "Top Rated",
-        "$mainUrl/categories" to "Categories"
+        "$mainUrl/" to "Newest",
+        "$mainUrl/most_viewed/" to "Most Popular",
+        "$mainUrl/new/" to "Last Added",
+        "$mainUrl/longest/" to "Longest",
+        "$mainUrl/top_rated/" to "Top Rated"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = if (page <= 1) request.data else "$mainUrl/videos?page=$page"
+        val url = if (page <= 1) request.data else "${request.data.removeSuffix("/")}/?p=$page"
         val res = app.get(url).document
         
-        val home = res.select("div.video-box, article.video-item, div.item").mapNotNull {
+        val home = res.select("div.th").mapNotNull {
             it.mainPageResults()
         }
         
-        val hasNext = res.selectFirst("a.pagination-next, a.next, a:contains(Next)") != null
+        val hasNext = res.selectFirst("a.next, link[rel=\"next\"]") != null
         
         return newHomePageResponse(
             list = HomePageList(
@@ -44,21 +45,22 @@ class DesiPornX : MainAPI() {
     }
 
     override suspend fun search(query: String, page: Int): SearchResponseList {
-        val url = if (page <= 1) "$mainUrl/search?q=$query" else "$mainUrl/search?page=$page&q=$query"
+        val url = if (page <= 1) "$mainUrl/?s=$query" else "$mainUrl/?s=$query&p=$page"
         val res = app.get(url).document
         
-        val results = res.select("div.video-box, article.video-item, div.item").mapNotNull {
+        val results = res.select("div.th").mapNotNull {
             it.mainPageResults()
         }
         
-        val hasNext = res.selectFirst("a.pagination-next, a.next, a:contains(Next)") != null
+        val hasNext = res.selectFirst("a.next, link[rel=\"next\"]") != null
         
         return newSearchResponseList(results, hasNext)
     }
 
     private fun Element.mainPageResults(): SearchResponse? {
-        val link = this.selectFirst("a.title, h3 a, a") ?: return null
-        val title = link.text().trim()
+        val link = this.selectFirst("a") ?: return null
+        val titleSpan = this.selectFirst("span.th_nm")
+        val title = titleSpan?.text()?.trim() ?: link.text().trim()
         val href = fixUrlNull(link.attr("href")) ?: return null
         val img = this.selectFirst("img") ?: return null
         val poster = fixUrlNull(img.attr("data-src").ifEmpty { img.attr("src") })
@@ -73,12 +75,12 @@ class DesiPornX : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         val res = app.get(url).document
         
-        val title = res.selectFirst("div.video-title h1, h1.title, h1")?.text()?.trim() ?: return null
+        val title = res.selectFirst("h1")?.text()?.trim() ?: return null
         val poster = res.selectFirst("meta[property=\"og:image\"]")?.attr("content")
         
-        val recommendations = res.select("div.related-videos div.video-box, div.sidebar-videos article").mapNotNull {
-            val link = it.selectFirst("a.title, h3 a, a") ?: return@mapNotNull null
-            val rectitle = link.text().trim()
+        val recommendations = res.select("div.th").mapNotNull {
+            val link = it.selectFirst("a") ?: return@mapNotNull null
+            val rectitle = it.selectFirst("span.th_nm")?.text()?.trim() ?: link.text().trim()
             val rechref = fixUrl(link.attr("href"))
             val img = it.selectFirst("img") ?: return@mapNotNull null
             val recposter = img.attr("data-src").ifEmpty { img.attr("src") }
@@ -88,7 +90,7 @@ class DesiPornX : MainAPI() {
             }
         }
 
-        val actorslist = res.select("div.video-actors a,.actors-list a").map {
+        val actorslist = res.select("div.video-actors a, .actors-list a").map {
             Actor(it.text().trim(), null)
         }
 
@@ -112,7 +114,6 @@ class DesiPornX : MainAPI() {
         val doc = app.get(data).document
         val resText = doc.html()
         
-        // Regular expression fallback to find direct mp4 or m3u8 sources if embedded in scripts
         val sourceRegex = Regex("'(https?://[^']+?\\.(?:mp4|m3u8)[^']*)'")
         val foundSources = sourceRegex.findAll(resText).map { it.groupValues[1] }.toSet()
 
@@ -130,7 +131,6 @@ class DesiPornX : MainAPI() {
             )
         }
 
-        // Check for standard iframe video embeds if direct links are not found
         if (foundSources.isEmpty()) {
             val iframeSrc = doc.select("iframe").attr("src")
             if (iframeSrc.isNotEmpty()) {
@@ -140,4 +140,4 @@ class DesiPornX : MainAPI() {
 
         return foundSources.isNotEmpty() || doc.select("iframe").isNotEmpty()
     }
-}
+}1
