@@ -109,11 +109,12 @@ class DesiPornX : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val res = app.get(data).text
+        val doc = app.get(data).document
+        val resText = doc.html()
         
         // Regular expression fallback to find direct mp4 or m3u8 sources if embedded in scripts
         val sourceRegex = Regex("'(https?://[^']+?\\.(?:mp4|m3u8)[^']*)'")
-        val foundSources = sourceRegex.findAll(res).map { it.groupValues[1] }.toSet()
+        val foundSources = sourceRegex.findAll(resText).map { it.groupValues[1] }.toSet()
 
         for (source in foundSources) {
             callback.invoke(
@@ -131,12 +132,12 @@ class DesiPornX : MainAPI() {
 
         // Check for standard iframe video embeds if direct links are not found
         if (foundSources.isEmpty()) {
-            val iframeSrc = res.select("iframe").attr("src")
+            val iframeSrc = doc.select("iframe").attr("src")
             if (iframeSrc.isNotEmpty()) {
                 loadExtractor(fixUrl(iframeSrc), data, subtitleCallback, callback)
             }
         }
 
-        return foundSources.isNotEmpty()
+        return foundSources.isNotEmpty() || doc.select("iframe").isNotEmpty()
     }
 }
