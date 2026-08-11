@@ -140,4 +140,4 @@ class DesiPornX : MainAPI() {
 
         return foundSources.isNotEmpty() || doc.select("iframe").isNotEmpty()
     }
-}1
+}
