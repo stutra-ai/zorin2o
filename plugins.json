@@ -2,20 +2,20 @@
     {
         "url": "https://raw.githubusercontent.com/stutra-ai/zorin2o/builds/DesiPornX.cs3",
         "status": 1,
-        "version": 1,
+        "version": -1,
         "name": "DesiPornX",
         "internalName": "DesiPornX",
         "authors": [
             "ByDune"
         ],
         "description": "DesiX",
-        "fileSize": 13167,
+        "fileSize": 13168,
         "repositoryUrl": "https://github.com/stutra-ai/zorin2o",
         "language": "en",
         "tvTypes": [
             "NSFW"
         ],
         "apiVersion": 1,
-        "fileHash": "sha256-060bf02c8abe34388f576fe5ba48a613af5178cd918e990c29b26c6d000c41fb"
+        "fileHash": "sha256-1dce8e53860f8ccdab9a6bca04dab856aca241f5f10308e4c738e2bb1e2bbdba"
     }
 ]
