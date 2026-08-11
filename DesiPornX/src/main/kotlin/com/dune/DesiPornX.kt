@@ -113,8 +113,7 @@ class DesiPornX : MainAPI() {
                     newExtractorLink(
                         source = this.name,
                         name = this.name,
-                        url = src,
-                        quality = Qualities.Unknown.value
+                        url = src
                     )
                 )
             }

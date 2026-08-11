@@ -28,8 +28,7 @@ class DesiPornXExtractor : ExtractorApi() {
                 newExtractorLink(
                     source = this.name,
                     name = this.name,
-                    url = videoUrl,
-                    quality = Qualities.Unknown.value
+                    url = videoUrl
                 )
             )
         }
