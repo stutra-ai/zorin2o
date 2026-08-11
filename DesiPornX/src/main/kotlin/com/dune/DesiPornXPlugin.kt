@@ -7,5 +7,6 @@ import com.lagradost.cloudstream3.plugins.Plugin
 class DesiPornXPlugin: Plugin() {
     override fun load() {
         registerMainAPI(DesiPornX())
+        registerExtractorAPI(DesiPornXExtractor())
     }
 }
