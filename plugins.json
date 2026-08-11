@@ -9,13 +9,13 @@
             "ByDune"
         ],
         "description": "DesiX",
-        "fileSize": 13168,
+        "fileSize": 14637,
         "repositoryUrl": "https://github.com/stutra-ai/zorin2o",
         "language": "en",
         "tvTypes": [
             "NSFW"
         ],
         "apiVersion": 1,
-        "fileHash": "sha256-1dce8e53860f8ccdab9a6bca04dab856aca241f5f10308e4c738e2bb1e2bbdba"
+        "fileHash": "sha256-fbab936b23a41bcfe7ee5b3716167a5c5cf53f3b0cce231b8c46765f703c4222"
     }
 ]
