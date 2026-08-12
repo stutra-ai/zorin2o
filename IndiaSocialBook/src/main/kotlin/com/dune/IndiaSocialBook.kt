@@ -2,9 +2,7 @@ package com.dune
 
 import android.util.Log
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.getQuality
-import com.lagradost.cloudstream3.utils.loadExtractor
+import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
 
 class IndiaSocialBook : MainAPI() {
@@ -52,17 +50,17 @@ class IndiaSocialBook : MainAPI() {
 
     private fun Element.toSearchResult(): SearchResponse? {
         val titleElement = this.selectFirst("h3 a, h2 a, a.title, .entry-header a") ?: return null
-        val title = titleElement.text().trim().ifBlank { 
+        val title = titleElement.text().trim().ifBlank {
             titleElement.attr("title").trim()
         }.ifBlank { return null }
-        
+
         val href = fixUrlNull(titleElement.attr("href")) ?: return null
-        
+
         val imgElement = this.selectFirst("img")
         val posterUrl = fixUrlNull(
             imgElement?.attr("data-original")
-                ?: imgElement?.attr("src") 
-                ?: imgElement?.attr("data-src") 
+                ?: imgElement?.attr("src")
+                ?: imgElement?.attr("data-src")
                 ?: imgElement?.attr("data-lazy-src")
         )
 
@@ -116,12 +114,12 @@ class IndiaSocialBook : MainAPI() {
             it.attr("src")
         }
 
-        val iframeLinks = document.select("iframe, embed, object").mapNotNull { 
-            it.attr("src").ifEmpty { it.attr("data-src") } 
+        val iframeLinks = document.select("iframe, embed, object").mapNotNull {
+            it.attr("src").ifEmpty { it.attr("data-src") }
         }
 
-        val anchorLinks = document.select("div.entry-content a, .video-container a, a.external").mapNotNull { 
-            it.attr("href") 
+        val anchorLinks = document.select("div.entry-content a, .video-container a, a.external").mapNotNull {
+            it.attr("href")
         }
 
         val allDiscoveredLinks = (videoSources + directVideoTags + iframeLinks + anchorLinks).distinct()
@@ -131,15 +129,15 @@ class IndiaSocialBook : MainAPI() {
             if (link.isNotBlank() && (link.startsWith("http") || link.startsWith("//") || link.startsWith("/"))) {
                 val fixed = fixUrl(link)
                 Log.d("IndiaSocialBook", "Processing link: $fixed")
-                
+
                 if (fixed.endsWith(".mp4", true) || fixed.contains(".m3u8")) {
                     callback.invoke(
-                        newExtractorLink(
+                        ExtractorLink(
                             source = name,
                             name = name,
                             url = fixed,
                             referer = data,
-                            quality = getQuality(fixed)
+                            quality = Qualities.Unknown.value
                         )
                     )
                 } else {
@@ -156,12 +154,12 @@ class IndiaSocialBook : MainAPI() {
                 Log.d("IndiaSocialBook", "Discovered Script Regex link: $scriptLink")
                 if (scriptLink.endsWith(".mp4", true) || scriptLink.contains(".m3u8")) {
                     callback.invoke(
-                        newExtractorLink(
+                        ExtractorLink(
                             source = name,
                             name = name,
                             url = scriptLink,
                             referer = data,
-                            quality = getQuality(scriptLink)
+                            quality = Qualities.Unknown.value
                         )
                     )
                 } else {
