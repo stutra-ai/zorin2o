@@ -7,7 +7,7 @@ import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.nodes.Element
 
 class IndiaSocialBook : MainAPI() {
-    override var mainUrl = "https://indiasocialbook.com"
+    override var mainUrl = "https://indiasocialbook.com/videos"
     override var name = "IndiaSocialBook"
     override val hasMainPage = true
     override var lang = "en"
@@ -21,6 +21,7 @@ class IndiaSocialBook : MainAPI() {
     )
 
     override val mainPage = mainPageOf(
+        "$mainUrl/" to "Home",
         "$mainUrl/videos/" to "Videos"
     )
 
@@ -35,7 +36,7 @@ class IndiaSocialBook : MainAPI() {
         }
 
         val document = app.get(url, headers = mainHeaders).document
-        val items = document.select("article, div.item, div.post-box, div.video-item, div.masonry-item, div.elementor-post")
+        val items = document.select("div.thumb-block, article, div.item, div.post-box")
         val home = items.mapNotNull { it.toSearchResult() }
 
         return newHomePageResponse(
@@ -49,7 +50,7 @@ class IndiaSocialBook : MainAPI() {
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        val titleElement = this.selectFirst("h2 a, h3 a, a.title, h2.entry-title a, a.elementor-post__thumbnail__link") ?: return null
+        val titleElement = this.selectFirst("h3 a, h2 a, a.title, .entry-header a") ?: return null
         val title = titleElement.text().trim().ifBlank { 
             titleElement.attr("title").trim()
         }.ifBlank { return null }
@@ -58,7 +59,8 @@ class IndiaSocialBook : MainAPI() {
         
         val imgElement = this.selectFirst("img")
         val posterUrl = fixUrlNull(
-            imgElement?.attr("src") 
+            imgElement?.attr("data-original")
+                ?: imgElement?.attr("src") 
                 ?: imgElement?.attr("data-src") 
                 ?: imgElement?.attr("data-lazy-src")
         )
@@ -70,9 +72,9 @@ class IndiaSocialBook : MainAPI() {
     }
 
     override suspend fun search(query: String, page: Int): SearchResponseList {
-        val searchUrl = "$mainUrl/page/$page/?s=$query"
+        val searchUrl = "https://indiasocialbook.com/videos/page/$page/?s=$query"
         val document = app.get(searchUrl, headers = mainHeaders).document
-        val items = document.select("article, div.item, div.post-box, div.video-item, div.masonry-item, div.elementor-post")
+        val items = document.select("div.thumb-block, article, div.item, div.post-box")
         val results = items.mapNotNull { it.toSearchResult() }
 
         return newSearchResponseList(results, hasNext = results.isNotEmpty())
@@ -84,9 +86,9 @@ class IndiaSocialBook : MainAPI() {
         val title = document.selectFirst("h1.entry-title, h1")?.text()?.trim() ?: "Unknown Title"
         val poster = fixUrlNull(
             document.selectFirst("meta[property='og:image']")?.attr("content")
-                ?: document.selectFirst("div.post-thumbnail img, .entry-content img, .elementor-post__thumbnail img")?.attr("src")
+                ?: document.selectFirst("div.post-thumbnail img, .entry-content img")?.attr("src")
         )
-        val description = document.selectFirst("div.entry-content, .description, .elementor-widget-theme-post-content")?.text()?.trim()
+        val description = document.selectFirst("div.entry-content, .description")?.text()?.trim()
 
         return newMovieLoadResponse(title, url, TvType.Movie, url) {
             this.posterUrl = poster
@@ -104,38 +106,71 @@ class IndiaSocialBook : MainAPI() {
         Log.d("IndiaSocialBook", "Loading Links for URL: $data")
         val res = app.get(data, headers = mainHeaders)
         val document = res.document
-        val htmlContent = res.text
 
-        // 1. Harvest standard iframes and embed elements
+        // 1. Harvest standard video tags, source elements, iframes, and embeds from Retrotube player setup
+        val videoSources = document.select("video source, audio source, .post-thumbnail video").mapNotNull {
+            it.attr("src").ifEmpty { it.attr("data-src") }
+        }
+
+        val directVideoTags = document.select("video").mapNotNull {
+            it.attr("src")
+        }
+
         val iframeLinks = document.select("iframe, embed, object").mapNotNull { 
             it.attr("src").ifEmpty { it.attr("data-src") } 
         }
 
-        // 2. Harvest anchor links pointing to video hosts inside content area
         val anchorLinks = document.select("div.entry-content a, .video-container a, a.external").mapNotNull { 
             it.attr("href") 
         }
 
-        val allDiscoveredLinks = (iframeLinks + anchorLinks).distinct()
+        val allDiscoveredLinks = (videoSources + directVideoTags + iframeLinks + anchorLinks).distinct()
         Log.d("IndiaSocialBook", "Discovered DOM links: $allDiscoveredLinks")
 
         for (link in allDiscoveredLinks) {
-            if (link.isNotBlank() && (link.startsWith("http") || link.startsWith("//"))) {
+            if (link.isNotBlank() && (link.startsWith("http") || link.startsWith("//") || link.startsWith("/"))) {
                 val fixed = fixUrl(link)
-                Log.d("IndiaSocialBook", "Passing DOM link to loadExtractor: $fixed")
-                loadExtractor(fixed, data, subtitleCallback, callback)
+                Log.d("IndiaSocialBook", "Processing link: $fixed")
+                
+                // If it's a direct mp4/m3u8 file source
+                if (fixed.endsWith(".mp4", true) || fixed.contains(".m3u8")) {
+                    callback.invoke(
+                        ExtractorLink(
+                            source = name,
+                            name = name,
+                            url = fixed,
+                            referer = data,
+                            quality = Qualities.Unknown.value,
+                            isM3u8 = fixed.contains(".m3u8")
+                        )
+                    )
+                } else {
+                    loadExtractor(fixed, data, subtitleCallback, callback)
+                }
             }
         }
 
-        // 3. Fallback: Parse hidden script blocks or embedded JSON players containing links
+        // 2. Fallback: Parse hidden script blocks, embedded JSON, or videojs configuration objects containing streams/sources
         document.select("script").forEach { script ->
             val scriptText = script.data()
-            // Match URLs inside script variables (e.g. file: "...", src: "...", or direct player URLs)
             val regexMatches = Regex("""https?://[^\s"'<>]+?\.(?:m3u8|mp4|mkv)|https?://(?:www\.)?(?:streamwish|vidhide|dood|filemoon|voe|streamtape|lulustream)[^\s"'<>]+""").findAll(scriptText)
             for (match in regexMatches) {
                 val scriptLink = match.value
                 Log.d("IndiaSocialBook", "Discovered Script Regex link: $scriptLink")
-                loadExtractor(scriptLink, data, subtitleCallback, callback)
+                if (scriptLink.endsWith(".mp4", true) || scriptLink.contains(".m3u8")) {
+                    callback.invoke(
+                        ExtractorLink(
+                            source = name,
+                            name = name,
+                            url = scriptLink,
+                            referer = data,
+                            quality = Qualities.Unknown.value,
+                            isM3u8 = scriptLink.contains(".m3u8")
+                        )
+                    )
+                } else {
+                    loadExtractor(scriptLink, data, subtitleCallback, callback)
+                }
             }
         }
 
