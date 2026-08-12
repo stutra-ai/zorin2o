@@ -63,7 +63,8 @@ class IndiaSocialBook : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val document = app.get(url, headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")).document
+        val headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        val document = app.get(url, headers = headers).document
         val title = document.selectFirst("h1.entry-title, h1")?.text()?.trim() ?: return null
         val poster = fixUrlNull(document.selectFirst("meta[property=og:image]")?.attr("content"))
         val description = document.selectFirst("meta[property=og:description]")?.attr("content")?.trim()
@@ -72,7 +73,7 @@ class IndiaSocialBook : MainAPI() {
         val actors = document.select("span.actor-links a, .template-actors a").map { Actor(it.text()) }
         val recommendations = document.select("article.post, div.thumb-block").mapNotNull { it.toSearchResult() }
 
-        // Parse tab items from .video-tabs ul.tab-nav li
+        // Parse tab items or multi-iframes
         val tabNavs = document.select("div.video-tabs ul.tab-nav li, ul.tab-nav li")
         
         val episodes = if (tabNavs.isNotEmpty()) {
@@ -80,10 +81,12 @@ class IndiaSocialBook : MainAPI() {
                 val tabName = el.text().trim().ifEmpty { "Part ${index + 1}" }
                 val targetTabId = el.attr("data-tab")
                 
-                val iframeSrc = document.selectFirst("div.tab-content div#$targetTabId iframe, div#$targetTabId iframe")?.attr("src")
-                    ?: document.select("div.tab-pane iframe, iframe").getOrNull(index)?.attr("src")
-
-                val episodeData = if (!iframeSrc.isNullOrBlank()) fixUrl(iframeSrc) else "$url#tab_$index"
+                val iframeSrc = if (targetTabId.isNotBlank()) {
+                    document.selectFirst("div.tab-content div#$targetTabId iframe, div#$targetTabId iframe")?.attr("src")
+                } else null
+                
+                val resolvedIframe = iframeSrc ?: document.select("div.tab-pane iframe, iframe").getOrNull(index)?.attr("src")
+                val episodeData = if (!resolvedIframe.isNullOrBlank()) fixUrl(resolvedIframe) else "$url#tab_$index"
 
                 newEpisode(episodeData) {
                     this.name = tabName
@@ -91,7 +94,11 @@ class IndiaSocialBook : MainAPI() {
                 }
             }
         } else {
-            val fallbackIframes = document.select("div.video-tabs div.tab-pane iframe, iframe")
+            val fallbackIframes = document.select("div.video-tabs div.tab-pane iframe, iframe").filter { 
+                val src = it.attr("src")
+                !src.isNullOrBlank() && src != "about:blank"
+            }
+            
             if (fallbackIframes.size > 1) {
                 fallbackIframes.mapIndexed { index, iframe ->
                     val iframeSrc = iframe.attr("src")
@@ -102,8 +109,11 @@ class IndiaSocialBook : MainAPI() {
                     }
                 }
             } else {
+                // Single video fallback episode mapping
+                val singleIframe = fallbackIframes.firstOrNull()?.attr("src")
+                val episodeData = if (!singleIframe.isNullOrBlank()) fixUrl(singleIframe) else url
                 listOf(
-                    newEpisode(url) {
+                    newEpisode(episodeData) {
                         this.name = title
                         this.episode = 1
                     }
@@ -141,85 +151,108 @@ class IndiaSocialBook : MainAPI() {
             "Referer" to mainUrl
         )
         var foundLinks = false
-        val iframeUrls = mutableListOf<String>()
 
-        if (data.contains("player-x.php") || data.startsWith("http") && !data.contains("#")) {
-            if (data.contains("player-x.php")) {
-                iframeUrls.add(data)
-            } else {
-                // It's a Movie page URL or an explicit direct link, fetch the page to discover iframes/sources
-                try {
-                    val doc = app.get(data, headers = headers).document
-                    doc.select("iframe").forEach { iframe ->
-                        iframe.attr("src").takeIf { !it.isNullOrBlank() }?.let { iframeUrls.add(fixUrl(it)) }
-                    }
-                    doc.select("video source, video, source").forEach { element ->
-                        val src = element.attr("src").takeIf { !it.isNullOrBlank() && it != "about:blank" } ?: element.attr("data-src")
-                        if (!src.isNullOrBlank() && !src.startsWith("data:")) {
-                            val videoUrl = fixUrl(src)
-                            val type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                            callback.invoke(
-                                newExtractorLink(name, name, videoUrl, type) {
-                                    this.referer = mainUrl
-                                    this.quality = Qualities.Unknown.value
-                                }
-                            )
-                            foundLinks = true
-                        }
-                    }
-                } catch (_: Exception) {}
-            }
-        } else {
-            // It's a multi-tab Episode/Part data tag (e.g. URL#tab_X or direct iframe stored in episode data)
+        // Resolve iframe URL from data string or fallback tab hash
+        val iframeUrl = if (data.startsWith("http")) data else {
             val baseUrl = data.substringBefore("#")
-            val tabIndex = data.substringAfter("#tab_", "").toIntOrNull()
-            
+            val tabIndexStr = data.substringAfter("#tab_", "").toIntOrNull() ?: 0
             try {
-                if (data.startsWith("http") && data.contains("player-x.php")) {
-                    iframeUrls.add(data)
-                } else {
-                    val doc = app.get(baseUrl, headers = headers).document
-                    if (tabIndex != null) {
-                        doc.select("div.tab-pane iframe, iframe").getOrNull(tabIndex)?.attr("src")?.let {
-                            iframeUrls.add(fixUrl(it))
+                val doc = app.get(baseUrl, headers = headers).document
+                doc.select("div.tab-pane iframe, iframe").getOrNull(tabIndexStr)?.attr("src")?.let { fixUrl(it) } ?: ""
+            } catch (_: Exception) { "" }
+        }
+
+        // 1. Decode clean-tube-player plugin base64 query string parameter if present
+        if (iframeUrl.isNotBlank() && iframeUrl.contains("player-x.php?q=")) {
+            try {
+                val base64Query = iframeUrl.substringAfter("q=").substringBefore("&")
+                val decodedBytes = Base64.decode(base64Query, Base64.DEFAULT)
+                val decodedString = String(decodedBytes, Charsets.UTF_8)
+                
+                val srcRegex = "src=[\"'](https?://[^\"']+)[\"']".toRegex(RegexOption.IGNORE_CASE)
+                for (match in srcRegex.findAll(decodedString)) {
+                    val videoUrl = match.groups[1]?.value ?: continue
+                    val type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                    callback.invoke(
+                        newExtractorLink(
+                            name = name,
+                            source = name,
+                            url = videoUrl,
+                            type = type
+                        ) {
+                            this.referer = mainUrl
+                            this.quality = Qualities.Unknown.value
                         }
-                    }
-                    if (iframeUrls.isEmpty()) {
-                        doc.select("iframe").forEach { iframe ->
-                            iframe.attr("src").takeIf { !it.isNullOrBlank() }?.let { iframeUrls.add(fixUrl(it)) }
-                        }
-                    }
+                    )
+                    foundLinks = true
                 }
             } catch (_: Exception) {}
         }
 
-        // Process collected iframe URLs by decoding the base64 plugin query
-        for (iframeUrl in iframeUrls) {
-            if (iframeUrl.contains("player-x.php?q=")) {
-                try {
-                    val base64Query = iframeUrl.substringAfter("q=").substringBefore("&")
-                    val decodedBytes = Base64.decode(base64Query, Base64.DEFAULT)
-                    val decodedString = String(decodedBytes, Charsets.UTF_8)
-                    
-                    val srcRegex = "src=[\"'](https?://[^\"']+)[\"']".toRegex(RegexOption.IGNORE_CASE)
-                    for (match in srcRegex.findAll(decodedString)) {
-                        val videoUrl = match.groups[1]?.value ?: continue
-                        val type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                        callback.invoke(
-                            newExtractorLink(name, name, videoUrl, type) {
-                                this.referer = mainUrl
-                                this.quality = Qualities.Unknown.value
-                            }
-                        )
-                        foundLinks = true
-                    }
-                } catch (_: Exception) {}
-            } else if (iframeUrl.isNotBlank()) {
-                if (loadExtractor(iframeUrl, mainUrl, subtitleCallback, callback)) {
+        // 2. Standard loadExtractor call if standard iframe is supplied
+        if (!foundLinks && iframeUrl.isNotBlank() && iframeUrl != mainUrl) {
+            if (loadExtractor(iframeUrl, mainUrl, subtitleCallback, callback)) {
+                foundLinks = true
+            }
+        }
+
+        // 3. Fallback Document HTML sweep (for single-video pages or direct source tags)
+        val targetPageUrl = if (data.startsWith("http") && !data.contains("player-x.php")) data else data.substringBefore("#")
+        try {
+            val response = app.get(targetPageUrl, headers = headers)
+            val document = response.document
+
+            // Target direct <source> and <video> tags
+            document.select("video source, video, source").forEach { element ->
+                val src = element.attr("src")
+                    .takeIf { !it.isNullOrBlank() && it != "about:blank" }
+                    ?: element.attr("data-src")
+                    ?: element.attr("data-url")
+
+                if (!src.isNullOrBlank() && !src.startsWith("data:")) {
+                    val videoUrl = fixUrl(src)
+                    val type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                    callback.invoke(
+                        newExtractorLink(
+                            name = name,
+                            source = name,
+                            url = videoUrl,
+                            type = type
+                        ) {
+                            this.referer = mainUrl
+                            this.quality = Qualities.Unknown.value
+                        }
+                    )
                     foundLinks = true
                 }
             }
-        }
+
+            // Raw HTML regex fallback search (.mp4, .m3u8, etc.)
+            val html = response.text
+            val videoRegex = "https?://[^\\s\"'<>]+?\\.(mp4|m3u8|webm|m4v)[^\\s\"'<>]*".toRegex(RegexOption.IGNORE_CASE)
+
+            for (match in videoRegex.findAll(html)) {
+                var matchUrl = match.value.replace("&amp;", "&")
+                matchUrl = matchUrl.trimEnd('"', '\'', '\\', '}', ']')
+                
+                if (!matchUrl.contains("googlesyndication") && !matchUrl.contains("facebook") && !matchUrl.contains("twitter")) {
+                    val fixed = fixUrl(matchUrl)
+                    val type = if (fixed.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                    callback.invoke(
+                        newExtractorLink(
+                            name = name,
+                            source = name,
+                            url = fixed,
+                            type = type
+                        ) {
+                            this.referer = mainUrl
+                            this.quality = Qualities.Unknown.value
+                        }
+                    )
+                    foundLinks = true
+                }
+            }
+        } catch (_: Exception) {}
 
         return foundLinks
     }
