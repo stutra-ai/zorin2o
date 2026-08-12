@@ -88,7 +88,7 @@ class IndiaSocialBook : MainAPI() {
             !src.contains("histats")
         }
 
-        val episodes = mutableList()
+        val episodes = mutableListOf<Episode>()
 
         if (tabNavs.isNotEmpty()) {
             tabNavs.mapIndexed { index, el ->
