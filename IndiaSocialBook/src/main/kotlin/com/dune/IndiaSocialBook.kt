@@ -78,30 +78,27 @@ class IndiaSocialBook : MainAPI() {
         val episodes = if (tabNavs.isNotEmpty()) {
             tabNavs.mapIndexed { index, el ->
                 val tabName = el.text().trim().ifEmpty { "Part ${index + 1}" }
-                Episode(
-                    data = "$url#tab_$index",
-                    name = tabName,
-                    episode = index + 1
-                )
+                newEpisode("$url#tab_$index") {
+                    this.name = tabName
+                    this.episode = index + 1
+                }
             }
         } else {
             // Fallback for regular single video pages or alternative containers
             val fallbackIframes = document.select("div.video-tabs div.tab-pane iframe, iframe")
             if (fallbackIframes.size > 1) {
                 fallbackIframes.mapIndexed { index, _ ->
-                    Episode(
-                        data = "$url#tab_$index",
-                        name = "Part ${index + 1}",
-                        episode = index + 1
-                    )
+                    newEpisode("$url#tab_$index") {
+                        this.name = "Part ${index + 1}"
+                        this.episode = index + 1
+                    }
                 }
             } else {
                 listOf(
-                    Episode(
-                        data = url,
-                        name = title,
-                        episode = 1
-                    )
+                    newEpisode(url) {
+                        this.name = title
+                        this.episode = 1
+                    }
                 )
             }
         }
