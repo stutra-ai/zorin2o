@@ -105,7 +105,7 @@ class IndiaSocialBook : MainAPI() {
     ): Boolean {
         Log.d("IndiaSocialBook", "Loading Links for URL: $data")
 
-        return safeApiCall {
+        val result = safeApiCall {
             val res = app.get(data, headers = mainHeaders)
             val document = res.document
 
@@ -120,9 +120,10 @@ class IndiaSocialBook : MainAPI() {
                                 source = this@IndiaSocialBook.name,
                                 name = this@IndiaSocialBook.name,
                                 url = fixedUrl,
-                                referer = mainUrl,
                                 quality = Qualities.Unknown.value
-                            )
+                            ) {
+                                this.referer = mainUrl
+                            }
                         )
                     }
                 }
@@ -150,9 +151,10 @@ class IndiaSocialBook : MainAPI() {
                                 source = this@IndiaSocialBook.name,
                                 name = this@IndiaSocialBook.name,
                                 url = scriptLink,
-                                referer = mainUrl,
                                 quality = Qualities.Unknown.value
-                            )
+                            ) {
+                                this.referer = mainUrl
+                            }
                         )
                     } else {
                         loadExtractor(scriptLink, data, subtitleCallback, callback)
@@ -161,6 +163,8 @@ class IndiaSocialBook : MainAPI() {
             }
 
             true
-        } ?: false
+        }
+
+        return result == true
     }
 }
