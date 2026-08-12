@@ -3,6 +3,7 @@ package com.dune
 import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.getQuality
 import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.nodes.Element
 
@@ -107,7 +108,6 @@ class IndiaSocialBook : MainAPI() {
         val res = app.get(data, headers = mainHeaders)
         val document = res.document
 
-        // 1. Harvest standard video tags, source elements, iframes, and embeds from Retrotube player setup
         val videoSources = document.select("video source, audio source, .post-thumbnail video").mapNotNull {
             it.attr("src").ifEmpty { it.attr("data-src") }
         }
@@ -132,16 +132,14 @@ class IndiaSocialBook : MainAPI() {
                 val fixed = fixUrl(link)
                 Log.d("IndiaSocialBook", "Processing link: $fixed")
                 
-                // If it's a direct mp4/m3u8 file source
                 if (fixed.endsWith(".mp4", true) || fixed.contains(".m3u8")) {
                     callback.invoke(
-                        ExtractorLink(
+                        newExtractorLink(
                             source = name,
                             name = name,
                             url = fixed,
                             referer = data,
-                            quality = Qualities.Unknown.value,
-                            isM3u8 = fixed.contains(".m3u8")
+                            quality = getQuality(fixed)
                         )
                     )
                 } else {
@@ -150,7 +148,6 @@ class IndiaSocialBook : MainAPI() {
             }
         }
 
-        // 2. Fallback: Parse hidden script blocks, embedded JSON, or videojs configuration objects containing streams/sources
         document.select("script").forEach { script ->
             val scriptText = script.data()
             val regexMatches = Regex("""https?://[^\s"'<>]+?\.(?:m3u8|mp4|mkv)|https?://(?:www\.)?(?:streamwish|vidhide|dood|filemoon|voe|streamtape|lulustream)[^\s"'<>]+""").findAll(scriptText)
@@ -159,13 +156,12 @@ class IndiaSocialBook : MainAPI() {
                 Log.d("IndiaSocialBook", "Discovered Script Regex link: $scriptLink")
                 if (scriptLink.endsWith(".mp4", true) || scriptLink.contains(".m3u8")) {
                     callback.invoke(
-                        ExtractorLink(
+                        newExtractorLink(
                             source = name,
                             name = name,
                             url = scriptLink,
                             referer = data,
-                            quality = Qualities.Unknown.value,
-                            isM3u8 = scriptLink.contains(".m3u8")
+                            quality = getQuality(scriptLink)
                         )
                     )
                 } else {
