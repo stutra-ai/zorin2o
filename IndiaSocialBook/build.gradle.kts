@@ -1,9 +1,8 @@
-version = 1.0001
-
+version = 1
 cloudstream {
     authors     = listOf("ByDune")
     language    = "en"
-    description = "DesiX"
+    description = "ISB Videos"
     status  = 1 // will be 3 if unspecified
     tvTypes = listOf("NSFW")
 }
