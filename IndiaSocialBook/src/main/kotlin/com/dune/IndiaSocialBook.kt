@@ -62,7 +62,7 @@ class IndiaSocialBook : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val document = app.get(url).document
+        val document = app.get(url, headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")).document
         val title = document.selectFirst("h1.entry-title, h1")?.text()?.trim() ?: return null
         val poster = fixUrlNull(document.selectFirst("meta[property=og:image]")?.attr("content"))
         val description = document.selectFirst("meta[property=og:description]")?.attr("content")?.trim()
@@ -86,56 +86,57 @@ class IndiaSocialBook : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val response = app.get(data)
+        val headers = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer" to mainUrl
+        )
+        val response = app.get(data, headers = headers)
         val document = response.document
         var foundLinks = false
 
-        // 1. Direct inspection of video and source elements in current DOM
-        for (source in document.select("video source, source, video")) {
-            val src = source.attr("__cporiginalvalueofsrc")
+        // 1. Check all video, source, embed, and iframe elements in the DOM
+        for (element in document.select("video, source, iframe, embed")) {
+            val src = element.attr("__cporiginalvalueofsrc")
                 .takeIf { !it.isNullOrBlank() }
-                ?: source.attr("src")
+                ?: element.attr("src")
                 .takeIf { !it.isNullOrBlank() && it != "about:blank" }
-                ?: source.attr("data-src")
-                ?: source.attr("data-url")
+                ?: element.attr("data-src")
+                ?: element.attr("data-url")
+                ?: element.attr("data-file")
 
             if (!src.isNullOrBlank() && !src.startsWith("data:")) {
                 val videoUrl = fixUrl(src)
-                callback.invoke(
-                    newExtractorLink(
-                        name = name,
-                        source = name,
-                        url = videoUrl,
-                        type = ExtractorLinkType.VIDEO
-                    ) {
-                        this.referer = mainUrl
-                        this.quality = Qualities.Unknown.value
+                if (element.tagName() == "iframe" || element.tagName() == "embed") {
+                    if (loadExtractor(videoUrl, data, subtitleCallback, callback)) {
+                        foundLinks = true
                     }
-                )
-                foundLinks = true
-            }
-        }
-
-        // 2. Check standard iframes
-        for (iframe in document.select("iframe")) {
-            val src = iframe.attr("src")
-                .takeIf { !it.isNullOrBlank() && it != "about:blank" }
-                ?: iframe.attr("data-src")
-
-            if (!src.isNullOrBlank() && !src.startsWith("data:")) {
-                if (loadExtractor(fixUrl(src), data, subtitleCallback, callback)) {
+                } else {
+                    callback.invoke(
+                        newExtractorLink(
+                            name = name,
+                            source = name,
+                            url = videoUrl,
+                            type = ExtractorLinkType.VIDEO
+                        ) {
+                            this.referer = mainUrl
+                            this.quality = Qualities.Unknown.value
+                        }
+                    )
                     foundLinks = true
                 }
             }
         }
 
-        // 3. Fallback: Parse entire text/html and script contents for any .mp4 links (handles fluid-player JS configs)
+        // 2. Scan script tags and entire raw HTML text for any embedded .mp4 or stream URLs (handles JS/fluid-player configurations)
         val html = response.text
-        val regex = "https?://[^\\s\"']+\\.mp4[^\\s\"']*".toRegex()
-        
+        val regex = "https?://[^\\s\"'<>]+?\\.mp4[^\\s\"'<>]*".toRegex(RegexOption.IGNORE_CASE)
+
         for (match in regex.findAll(html)) {
-            val matchUrl = match.value.replace("&amp;", "&")
-            if (!matchUrl.contains("googlesyndication") && !matchUrl.contains("facebook")) {
+            var matchUrl = match.value.replace("&amp;", "&")
+            // Clean up trailing characters or quotes if captured
+            matchUrl = matchUrl.trimEnd('"', '\'', '\\', '}', ']')
+            
+            if (!matchUrl.contains("googlesyndication") && !matchUrl.contains("facebook") && !matchUrl.contains("twitter")) {
                 val fixed = fixUrl(matchUrl)
                 callback.invoke(
                     newExtractorLink(
