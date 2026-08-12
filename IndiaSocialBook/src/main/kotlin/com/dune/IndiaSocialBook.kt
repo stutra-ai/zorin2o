@@ -74,11 +74,14 @@ class IndiaSocialBook : MainAPI() {
         val actors = document.select("span.actor-links a, .template-actors a").map { Actor(it.text()) }
         val recommendations = document.select("article.post, div.thumb-block").mapNotNull { it.toSearchResult() }
 
-        // Collect tab items if available
-        val tabNavs = document.select("div.video-tabs ul.tab-nav li, ul.tab-nav li")
+        // Isolate strictly to the main post content area to avoid sidebars/recommendations leak
+        val contentArea = document.selectFirst("div.entry-content, article.post") ?: document
+
+        // Collect tab items if available inside content
+        val tabNavs = contentArea.select("div.video-tabs ul.tab-nav li, ul.tab-nav li")
         
-        // Collect all valid content iframes/embeds across the page
-        val validIframes = document.select("article iframe, div.entry-content iframe, div.video-container iframe, iframe").filter {
+        // Collect valid content iframes inside content area only
+        val validIframes = contentArea.select("iframe, embed").filter {
             val src = it.attr("src")
             !src.isNullOrBlank() && 
             src != "about:blank" && 
@@ -95,10 +98,10 @@ class IndiaSocialBook : MainAPI() {
                 val tabName = el.text().trim().ifEmpty { "Part ${index + 1}" }
                 val targetTabId = el.attr("data-tab")
                 val iframeSrc = if (targetTabId.isNotBlank()) {
-                    document.selectFirst("div.tab-content div#$targetTabId iframe, div#$targetTabId iframe")?.attr("src")
+                    contentArea.selectFirst("div.tab-content div#$targetTabId iframe, div#$targetTabId iframe")?.attr("src")
                 } else null
                 
-                val resolvedIframe = iframeSrc ?: document.select("div.tab-pane iframe, iframe").getOrNull(index)?.attr("src")
+                val resolvedIframe = iframeSrc ?: contentArea.select("div.tab-pane iframe, iframe").getOrNull(index)?.attr("src")
                 val episodeData = if (!resolvedIframe.isNullOrBlank()) fixUrl(resolvedIframe) else "$url#tab_$index"
 
                 newEpisode(episodeData) {
@@ -146,8 +149,8 @@ class IndiaSocialBook : MainAPI() {
         }
     }
 
-    private suspend fun extractFromDoc(
-        doc: Document,
+    private suspend fun extractFromElement(
+        element: Element,
         currentReferer: String,
         headers: Map<String, String>,
         subtitleCallback: (SubtitleFile) -> Unit,
@@ -155,13 +158,13 @@ class IndiaSocialBook : MainAPI() {
     ): Boolean {
         var foundLinks = false
 
-        // 1. Target direct <source> and <video> tags
-        doc.select("video source, video, source").forEach { element ->
-            val src = element.attr("src")
+        // 1. Target direct <source> and <video> tags within the element
+        element.select("video source, video, source").forEach { el ->
+            val src = el.attr("src")
                 .takeIf { !it.isNullOrBlank() && it != "about:blank" }
-                ?: element.attr("data-src")
-                ?: element.attr("data-url")
-                ?: element.attr("data-file")
+                ?: el.attr("data-src")
+                ?: el.attr("data-url")
+                ?: el.attr("data-file")
 
             if (!src.isNullOrBlank() && !src.startsWith("data:")) {
                 val videoUrl = fixUrl(src)
@@ -181,13 +184,12 @@ class IndiaSocialBook : MainAPI() {
             }
         }
 
-        // 2. Handle iframes inside the document
-        doc.select("iframe, embed").forEach { element ->
-            val src = element.attr("src")
-            if (!src.isNullOrBlank() && !src.startsWith("data:")) {
+        // 2. Handle iframes inside the element
+        element.select("iframe, embed").forEach { el ->
+            val src = el.attr("src")
+            if (!src.isNullOrBlank() && !src.startsWith("data:") && !src.contains("googlesyndication")) {
                 val iframeUrl = fixUrl(src)
                 
-                // Check Base64 clean-tube-player pattern
                 if (iframeUrl.contains("player-x.php?q=")) {
                     try {
                         val base64Query = iframeUrl.substringAfter("q=").substringBefore("&")
@@ -217,59 +219,12 @@ class IndiaSocialBook : MainAPI() {
                     } else {
                         try {
                             val iframeDoc = app.get(iframeUrl, headers = headers).document
-                            if (extractFromDoc(iframeDoc, iframeUrl, headers, subtitleCallback, callback)) {
+                            if (extractFromElement(iframeDoc.body(), iframeUrl, headers, subtitleCallback, callback)) {
                                 foundLinks = true
                             }
                         } catch (_: Exception) {}
                     }
                 }
-            }
-        }
-
-        // 3. Raw HTML regex scan for video file extensions (.mp4, .m3u8, etc.)
-        val html = doc.html()
-        val videoRegex = "https?://[^\\s\"'<>]+?\\.(mp4|m3u8|webm|m4v)[^\\s\"'<>]*".toRegex(RegexOption.IGNORE_CASE)
-        for (match in videoRegex.findAll(html)) {
-            var matchUrl = match.value.replace("&amp;", "&")
-            matchUrl = matchUrl.trimEnd('"', '\'', '\\', '}', ']')
-            
-            if (!matchUrl.contains("googlesyndication") && !matchUrl.contains("facebook") && !matchUrl.contains("twitter")) {
-                val fixed = fixUrl(matchUrl)
-                val type = if (fixed.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                callback.invoke(
-                    newExtractorLink(
-                        name = name,
-                        source = name,
-                        url = fixed,
-                        type = type
-                    ) {
-                        this.referer = currentReferer
-                        this.quality = Qualities.Unknown.value
-                    }
-                )
-                foundLinks = true
-            }
-        }
-
-        // 4. Scan JavaScript player configurations
-        val jsConfigRegex = "(?:file|src|url|video_url|source)\\s*[:=]\\s*[\"'](https?://[^\"']+)[\"']".toRegex(RegexOption.IGNORE_CASE)
-        for (match in jsConfigRegex.findAll(html)) {
-            val matchUrl = match.groups[1]?.value?.replace("&amp;", "&") ?: continue
-            if (!matchUrl.contains("googlesyndication") && !matchUrl.contains("wp-content/themes") && !matchUrl.contains("wp-includes")) {
-                val fixed = fixUrl(matchUrl)
-                val type = if (fixed.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                callback.invoke(
-                    newExtractorLink(
-                        name = name,
-                        source = name,
-                        url = fixed,
-                        type = type
-                    ) {
-                        this.referer = currentReferer
-                        this.quality = Qualities.Unknown.value
-                    }
-                )
-                foundLinks = true
             }
         }
 
@@ -294,7 +249,7 @@ class IndiaSocialBook : MainAPI() {
             data.substringBefore("#")
         }
 
-        // If data points directly to an iframe or player URL, try extracting from it directly first
+        // If data points directly to an iframe or specific player link
         if (data.startsWith("http") && !data.contains("indiasocialbook.com/videos/")) {
             try {
                 if (loadExtractor(data, mainUrl, subtitleCallback, callback)) {
@@ -320,22 +275,41 @@ class IndiaSocialBook : MainAPI() {
                         )
                         foundLinks = true
                     }
-                } else {
-                    val iframeDoc = app.get(data, headers = headers).document
-                    if (extractFromDoc(iframeDoc, data, headers, subtitleCallback, callback)) {
-                        foundLinks = true
-                    }
                 }
             } catch (_: Exception) {}
         }
 
-        // If not found yet, scrape the target page URL document
+        // Scrape strictly the content container of the target article page
         if (!foundLinks) {
             try {
                 if (targetUrl.isNotBlank()) {
                     val response = app.get(targetUrl, headers = headers)
-                    if (extractFromDoc(response.document, targetUrl, headers, subtitleCallback, callback)) {
-                        foundLinks = true
+                    val contentArea = response.document.selectFirst("div.entry-content, article.post") ?: response.document.body()
+                    
+                    // If data has a specific tab hash or iframe index, target that specific element
+                    if (data.contains("#tab_")) {
+                        val tabIndex = data.substringAfter("#tab_").toIntOrNull() ?: 0
+                        val tabPanes = contentArea.select("div.tab-pane, div.tab-content > div")
+                        val targetPane = tabPanes.getOrNull(tabIndex) ?: contentArea
+                        if (extractFromElement(targetPane, targetUrl, headers, subtitleCallback, callback)) {
+                            foundLinks = true
+                        }
+                    } else if (data.contains("#iframe_")) {
+                        val iframeIndex = data.substringAfter("#iframe_").toIntOrNull() ?: 0
+                        val iframes = contentArea.select("iframe")
+                        val targetIframe = iframes.getOrNull(iframeIndex)
+                        val iframeSrc = targetIframe?.attr("src")
+                        if (!iframeSrc.isNullOrBlank()) {
+                            val fixedSrc = fixUrl(iframeSrc)
+                            if (loadExtractor(fixedSrc, targetUrl, subtitleCallback, callback)) {
+                                foundLinks = true
+                            }
+                        }
+                    } else {
+                        // General fallback on the scoped content area
+                        if (extractFromElement(contentArea, targetUrl, headers, subtitleCallback, callback)) {
+                            foundLinks = true
+                        }
                     }
                 }
             } catch (_: Exception) {}
