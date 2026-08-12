@@ -143,47 +143,57 @@ class IndiaSocialBook : MainAPI() {
         var foundLinks = false
         val iframeUrls = mutableListOf<String>()
 
-        if (data.contains("player-x.php")) {
-            iframeUrls.add(data)
+        if (data.contains("player-x.php") || data.startsWith("http") && !data.contains("#")) {
+            if (data.contains("player-x.php")) {
+                iframeUrls.add(data)
+            } else {
+                // It's a Movie page URL or an explicit direct link, fetch the page to discover iframes/sources
+                try {
+                    val doc = app.get(data, headers = headers).document
+                    doc.select("iframe").forEach { iframe ->
+                        iframe.attr("src").takeIf { !it.isNullOrBlank() }?.let { iframeUrls.add(fixUrl(it)) }
+                    }
+                    doc.select("video source, video, source").forEach { element ->
+                        val src = element.attr("src").takeIf { !it.isNullOrBlank() && it != "about:blank" } ?: element.attr("data-src")
+                        if (!src.isNullOrBlank() && !src.startsWith("data:")) {
+                            val videoUrl = fixUrl(src)
+                            val type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                            callback.invoke(
+                                newExtractorLink(name, name, videoUrl, type) {
+                                    this.referer = mainUrl
+                                    this.quality = Qualities.Unknown.value
+                                }
+                            )
+                            foundLinks = true
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
         } else {
+            // It's a multi-tab Episode/Part data tag (e.g. URL#tab_X or direct iframe stored in episode data)
             val baseUrl = data.substringBefore("#")
             val tabIndex = data.substringAfter("#tab_", "").toIntOrNull()
             
             try {
-                val doc = app.get(baseUrl, headers = headers).document
-                
-                if (data.contains("#tab_") && tabIndex != null) {
-                    doc.select("div.tab-pane iframe, iframe").getOrNull(tabIndex)?.attr("src")?.let {
-                        iframeUrls.add(fixUrl(it))
+                if (data.startsWith("http") && data.contains("player-x.php")) {
+                    iframeUrls.add(data)
+                } else {
+                    val doc = app.get(baseUrl, headers = headers).document
+                    if (tabIndex != null) {
+                        doc.select("div.tab-pane iframe, iframe").getOrNull(tabIndex)?.attr("src")?.let {
+                            iframeUrls.add(fixUrl(it))
+                        }
                     }
-                }
-                
-                // If no specific tab iframe was matched or it's a single video post page, grab all iframes
-                if (iframeUrls.isEmpty()) {
-                    doc.select("iframe").forEach { iframe ->
-                        iframe.attr("src").takeIf { !it.isNullOrBlank() }?.let { iframeUrls.add(fixUrl(it)) }
-                    }
-                }
-                
-                // Also check direct video sources on the page
-                doc.select("video source, video, source").forEach { element ->
-                    val src = element.attr("src").takeIf { !it.isNullOrBlank() && it != "about:blank" } ?: element.attr("data-src")
-                    if (!src.isNullOrBlank() && !src.startsWith("data:")) {
-                        val videoUrl = fixUrl(src)
-                        val type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                        callback.invoke(
-                            newExtractorLink(name, name, videoUrl, type) {
-                                this.referer = mainUrl
-                                this.quality = Qualities.Unknown.value
-                            }
-                        )
-                        foundLinks = true
+                    if (iframeUrls.isEmpty()) {
+                        doc.select("iframe").forEach { iframe ->
+                            iframe.attr("src").takeIf { !it.isNullOrBlank() }?.let { iframeUrls.add(fixUrl(it)) }
+                        }
                     }
                 }
             } catch (_: Exception) {}
         }
 
-        // Process collected iframe URLs
+        // Process collected iframe URLs by decoding the base64 plugin query
         for (iframeUrl in iframeUrls) {
             if (iframeUrl.contains("player-x.php?q=")) {
                 try {
