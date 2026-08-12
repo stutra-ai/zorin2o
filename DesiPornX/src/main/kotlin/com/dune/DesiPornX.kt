@@ -48,15 +48,12 @@ class DesiPornX : MainAPI() {
                 ?: img?.attr("src")
         )
 
-        val durationText = this.selectFirst("span.th_dr")?.text()?.trim()
-
         return newMovieSearchResponse(
             titleElement.text(),
             fixUrl(anchor.attr("href")),
             TvType.NSFW
         ) {
             this.posterUrl = poster
-            this.quality = durationText
         }
     }
 
