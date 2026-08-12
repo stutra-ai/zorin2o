@@ -30,9 +30,8 @@ class DesiPornX : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val url = mainUrl
         val document = app.post(
-            url,
+            mainUrl,
             data = mapOf("q" to query)
         ).document
         
@@ -60,8 +59,6 @@ class DesiPornX : MainAPI() {
             this.quality = durationText
         }
     }
-
-    override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query)
 
     override suspend fun load(url: String): LoadResponse? {
         val document = app.get(url).document
