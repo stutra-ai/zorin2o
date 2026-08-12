@@ -1,81 +1,54 @@
 package com.dune
 
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
 
 class DesiPornX : MainAPI() {
-    override var mainUrl = "https://desipornx.org"
+    override var mainUrl = "https://www.desipornx.com" // Replace with actual URL
     override var name = "DesiPornX"
     override val hasMainPage = true
-    override var lang = "en"
-    override val hasQuickSearch = false
-    override val supportedTypes = setOf(TvType.NSFW)
+    override var lang = "hi"
+    override val supportedTypes = setOf(TvType.Adult)
 
     override val mainPage = mainPageOf(
-        "$mainUrl/" to "Home / Recent",
-        "$mainUrl/most_viewed/" to "Most Popular",
-        "$mainUrl/longest/" to "Longest",
-        "$mainUrl/top_rated/" to "Top Rated"
+        "$mainUrl/latest/" to "Latest",
+        "$mainUrl/popular/" to "Popular"
     )
 
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = if (page <= 1) request.data else "${request.data.removeSuffix("/")}/new/?p=$page"
-        val document = app.get(url).document
-        
-        val results = document.select("div.th").mapNotNull { it.toSearchResult() }
-        return newHomePageResponse(HomePageList(request.name, results, true), true)
-    }
-
-    override suspend fun search(query: String, page: Int): SearchResponseList {
-        val formattedQuery = query.replace(" ", "+")
-        val url = if (page <= 1) "$mainUrl/?s=$formattedQuery" else "$mainUrl/page/$page/?s=$formattedQuery"
-        val document = app.get(url).document
-        
-        val results = document.select("div.th").mapNotNull { it.toSearchResult() }
-        return newSearchResponseList(results, true)
+    override suspend fun getMainPage(
+        page: Int,
+        request: MainPageRequest
+    ): HomePageResponse {
+        val document = app.get(request.data).document
+        val home = document.select("div.item-class").mapNotNull { it.toSearchResult() }
+        return newHomePageResponse(request.name, home)
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        val titleElement = this.selectFirst("a") ?: return null
-        val title = this.selectFirst("span.th_nm")?.text()?.trim() ?: titleElement.text().trim()
-        val href = fixUrl(titleElement.attr("href"))
-        
-        val img = this.selectFirst("img")
-        val poster = fixUrlNull(
-            img?.attr("data-src")?.takeIf { it.isNotEmpty() && !it.startsWith("data:") }
-                ?: img?.attr("src")
-        )
+        val title = this.selectFirst("a.title")?.text() ?: return null
+        val href = fixUrl(this.selectFirst("a")?.attr("href") ?: return null)
+        val posterUrl = fixUrlNull(this.selectFirst("img")?.attr("data-src") ?: this.selectFirst("img")?.attr("src"))
 
-        return newMovieSearchResponse(title, href, TvType.NSFW) {
-            this.posterUrl = poster
+        return newMovieSearchResponse(title, href, TvType.Adult) {
+            this.posterUrl = posterUrl
         }
     }
 
-    override suspend fun quickSearch(query: String): List<SearchResponse>? {
-        val formattedQuery = query.replace(" ", "+")
-        val url = "$mainUrl/?s=$formattedQuery"
-        val document = app.get(url).document
-        return document.select("div.th").mapNotNull { it.toSearchResult() }
+    override suspend fun search(query: String): List<SearchResponse> {
+        val document = app.get("$mainUrl/search/$query/").document
+        return document.select("div.item-class").mapNotNull { it.toSearchResult() }
     }
 
-    override suspend fun load(url: String): LoadResponse? {
+    override suspend fun load(url: String): LoadResponse {
         val document = app.get(url).document
-        val title = document.selectFirst("h1.entry-title, h1")?.text()?.trim() ?: "Video"
-        val poster = fixUrlNull(document.selectFirst("meta[property=og:image]")?.attr("content"))
-        val description = document.selectFirst("meta[property=og:description]")?.attr("content")?.trim()
-        
-        val tags = document.select("span.tags-links a, .tagcloud a").map { it.text() }
-        val actors = document.select("span.actor-links a, .template-actors a").map { Actor(it.text()) }
-        val recommendations = document.select("div.th").mapNotNull { it.toSearchResult() }
+        val title = document.selectFirst("h1.title")?.text().orEmpty()
+        val poster = fixUrlNull(document.selectFirst("meta[property='og:image']")?.attr("content"))
+        val description = document.selectFirst("div.description")?.text()
 
-        return newMovieLoadResponse(title, url, TvType.NSFW, url) {
+        return newMovieLoadResponse(title, url, TvType.Adult, url) {
             this.posterUrl = poster
             this.plot = description
-            this.tags = tags
-            this.recommendations = recommendations
-            addActors(actors)
         }
     }
 
@@ -86,27 +59,21 @@ class DesiPornX : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val document = app.get(data).document
-        var foundLinks = false
 
-        document.select("video source, iframe, div.post-thumbnail video").forEach { element ->
-            val src = element.attr("src").takeIf { it.isNotBlank() } ?: element.attr("data-src")
-            if (!src.isNullOrBlank()) {
-                val videoUrl = fixUrl(src)
-                callback.invoke(
-                    newExtractorLink(
-                        name = name,
-                        source = name,
-                        url = videoUrl,
-                        type = ExtractorLinkType.VIDEO
-                    ) {
-                        this.referer = mainUrl
-                        this.quality = Qualities.Unknown.value
-                    }
-                )
-                foundLinks = true
-            }
-        }
+        // Example: Extracting a direct video link or handling an iframe source
+        val videoUrl = document.selectFirst("source")?.attr("src") ?: return false
 
-        return foundLinks
+        callback.invoke(
+            ExtractorLink(
+                source = name,
+                name = name,
+                url = videoUrl,
+                referer = mainUrl,
+                quality = Qualities.P720.value,
+                isM3u8 = videoUrl.contains(".m3u8")
+            )
+        )
+
+        return true
     }
 }
