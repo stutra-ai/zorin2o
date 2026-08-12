@@ -54,7 +54,12 @@ class IndiaSocialBook : MainAPI() {
         }
     }
 
-    override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query).list
+    override suspend fun quickSearch(query: String): List<SearchResponse>? {
+        val formattedQuery = query.replace(" ", "+")
+        val url = "$mainUrl/?s=$formattedQuery"
+        val document = app.get(url).document
+        return document.select("article.post, div.thumb-block").mapNotNull { it.toSearchResult() }
+    }
 
     override suspend fun load(url: String): LoadResponse? {
         val document = app.get(url).document
