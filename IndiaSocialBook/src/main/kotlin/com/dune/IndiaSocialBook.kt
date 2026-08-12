@@ -94,11 +94,9 @@ class IndiaSocialBook : MainAPI() {
         val document = response.document
         var foundLinks = false
 
-        // 1. Check all video, source, embed, and iframe elements in the DOM
-        for (element in document.select("video, source, iframe, embed")) {
-            val src = element.attr("__cporiginalvalueofsrc")
-                .takeIf { !it.isNullOrBlank() }
-                ?: element.attr("src")
+        // 1. Target direct <source> tags and <video> elements in the main document DOM
+        document.select("video source, video, source").forEach { element ->
+            val src = element.attr("src")
                 .takeIf { !it.isNullOrBlank() && it != "about:blank" }
                 ?: element.attr("data-src")
                 ?: element.attr("data-url")
@@ -106,44 +104,96 @@ class IndiaSocialBook : MainAPI() {
 
             if (!src.isNullOrBlank() && !src.startsWith("data:")) {
                 val videoUrl = fixUrl(src)
-                if (element.tagName() == "iframe" || element.tagName() == "embed") {
-                    if (loadExtractor(videoUrl, data, subtitleCallback, callback)) {
-                        foundLinks = true
+                val type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                callback.invoke(
+                    newExtractorLink(
+                        name = name,
+                        source = name,
+                        url = videoUrl,
+                        type = type
+                    ) {
+                        this.referer = mainUrl
+                        this.quality = Qualities.Unknown.value
                     }
-                } else {
-                    callback.invoke(
-                        newExtractorLink(
-                            name = name,
-                            source = name,
-                            url = videoUrl,
-                            type = ExtractorLinkType.VIDEO
-                        ) {
-                            this.referer = mainUrl
-                            this.quality = Qualities.Unknown.value
-                        }
-                    )
+                )
+                foundLinks = true
+            }
+        }
+
+        // 2. Handle WordPress plugin iframe loaders / ajax video wrappers if present
+        document.select("iframe, embed").forEach { element ->
+            val src = element.attr("src")
+            if (!src.isNullOrBlank() && !src.startsWith("data:")) {
+                val iframeUrl = fixUrl(src)
+                if (loadExtractor(iframeUrl, data, subtitleCallback, callback)) {
                     foundLinks = true
+                } else {
+                    // Try scraping inner page of the iframe/plugin container directly
+                    try {
+                        val iframeDoc = app.get(iframeUrl, headers = headers).document
+                        iframeDoc.select("video, source").forEach { innerEl ->
+                            val innerSrc = innerEl.attr("src") ?: innerEl.attr("data-src")
+                            if (!innerSrc.isNullOrBlank()) {
+                                val fixedInner = fixUrl(innerSrc)
+                                val type = if (fixedInner.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                                callback.invoke(
+                                    newExtractorLink(
+                                        name = name,
+                                        source = name,
+                                        url = fixedInner,
+                                        type = type
+                                    ) {
+                                        this.referer = iframeUrl
+                                        this.quality = Qualities.Unknown.value
+                                    }
+                                )
+                                foundLinks = true
+                            }
+                        }
+                    } catch (_: Exception) {}
                 }
             }
         }
 
-        // 2. Scan script tags and entire raw HTML text for any embedded .mp4 or stream URLs (handles JS/fluid-player configurations)
+        // 3. Raw HTML regex scan for embedded video file formats (.mp4, .m3u8, .webm, .m4v)
         val html = response.text
-        val regex = "https?://[^\\s\"'<>]+?\\.mp4[^\\s\"'<>]*".toRegex(RegexOption.IGNORE_CASE)
+        val videoRegex = "https?://[^\\s\"'<>]+?\\.(mp4|m3u8|webm|m4v)[^\\s\"'<>]*".toRegex(RegexOption.IGNORE_CASE)
 
-        for (match in regex.findAll(html)) {
+        for (match in videoRegex.findAll(html)) {
             var matchUrl = match.value.replace("&amp;", "&")
-            // Clean up trailing characters or quotes if captured
             matchUrl = matchUrl.trimEnd('"', '\'', '\\', '}', ']')
             
             if (!matchUrl.contains("googlesyndication") && !matchUrl.contains("facebook") && !matchUrl.contains("twitter")) {
                 val fixed = fixUrl(matchUrl)
+                val type = if (fixed.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                 callback.invoke(
                     newExtractorLink(
                         name = name,
                         source = name,
                         url = fixed,
-                        type = ExtractorLinkType.VIDEO
+                        type = type
+                    ) {
+                        this.referer = mainUrl
+                        this.quality = Qualities.Unknown.value
+                    }
+                )
+                foundLinks = true
+            }
+        }
+
+        // 4. Scan JavaScript player configurations (Fluid Player / WP plugins setup)
+        val jsConfigRegex = "(?:file|src|url|video_url|source)\\s*[:=]\\s*[\"'](https?://[^\"']+)[\"']".toRegex(RegexOption.IGNORE_CASE)
+        for (match in jsConfigRegex.findAll(html)) {
+            val matchUrl = match.groups[1]?.value?.replace("&amp;", "&") ?: continue
+            if (!matchUrl.contains("googlesyndication") && !matchUrl.contains("wp-content/themes") && !matchUrl.contains("wp-includes")) {
+                val fixed = fixUrl(matchUrl)
+                val type = if (fixed.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                callback.invoke(
+                    newExtractorLink(
+                        name = name,
+                        source = name,
+                        url = fixed,
+                        type = type
                     ) {
                         this.referer = mainUrl
                         this.quality = Qualities.Unknown.value
