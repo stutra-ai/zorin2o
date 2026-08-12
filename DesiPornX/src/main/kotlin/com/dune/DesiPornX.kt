@@ -5,7 +5,6 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
-import java.math.BigInteger
 
 class DesiPornX : MainAPI() {
     override var mainUrl = "https://desipornx.org"
@@ -30,16 +29,14 @@ class DesiPornX : MainAPI() {
         return newHomePageResponse(HomePageList(request.name, home, true), true)
     }
 
-    override suspend fun search(query: String, page: Int): SearchResponseList {
-        // DesiPornX uses POST form for search based on HTML form action="/" method="POST" with input name="q"
-        val url = if (page <= 1) mainUrl else "$mainUrl/page/$page/"
+    override suspend fun search(query: String): List<SearchResponse> {
+        val url = mainUrl
         val document = app.post(
             url,
             data = mapOf("q" to query)
         ).document
         
-        val results = document.select("div.cnt_bl div.ths_bl div.th").mapNotNull { it.toSearchResult() }
-        return newSearchResponseList(results, true)
+        return document.select("div.cnt_bl div.ths_bl div.th").mapNotNull { it.toSearchResult() }
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
@@ -60,25 +57,11 @@ class DesiPornX : MainAPI() {
             TvType.NSFW
         ) {
             this.posterUrl = poster
-            this.duration = parseDuration(durationText)
+            this.quality = durationText
         }
     }
 
-    private fun parseDuration(durationStr: String?): Int? {
-        if (durationStr.isNullOrEmpty()) return null
-        try {
-            val parts = durationStr.replace(Regex("[^0-9:]"), "").split(":")
-            return when (parts.size) {
-                2 -> parts[0].toIntOrNull()?.times(60)
-                3 -> parts[0].toIntOrNull()?.times(3600)?.plus(parts[1].toIntOrNull()?.times(60) ?: 0)
-                else -> parts[0].toIntOrNull()
-            }
-        } catch (e: Exception) {
-            return null
-        }
-    }
-
-    override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query).results
+    override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query)
 
     override suspend fun load(url: String): LoadResponse? {
         val document = app.get(url).document
@@ -113,11 +96,6 @@ class DesiPornX : MainAPI() {
         val document = app.get(data).document
         var videoLinkFound = false
 
-        // Fluidplayer or native video element source extraction fallback
-        // Looking for source tags or embedded script streams inside the watch page
-        val scriptContent = document.select("script").html()
-        
-        // Check if there are direct sources or iframe embeds
         val iframeSrc = document.selectFirst("iframe")?.attr("src")
         if (!iframeSrc.isNullOrEmpty()) {
             val iframeDoc = app.get(fixUrl(iframeSrc)).document
@@ -141,7 +119,6 @@ class DesiPornX : MainAPI() {
             }
         }
 
-        // Search scripts or source elements directly on the main page
         document.select("source").forEach { source ->
             val videoUrl = source.attr("src")
             if (!videoUrl.isNullOrEmpty()) {
