@@ -5,11 +5,11 @@ import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
 
 class DesiPornX : MainAPI() {
-    override var mainUrl = "https://www.desipornx.com" // Replace with actual URL
+    override var mainUrl = "https://www.desipornx.com"
     override var name = "DesiPornX"
     override val hasMainPage = true
     override var lang = "hi"
-    override val supportedTypes = setOf(TvType.Adult)
+    override val supportedTypes = setOf(TvType.NSFW)
 
     override val mainPage = mainPageOf(
         "$mainUrl/latest/" to "Latest",
@@ -30,7 +30,7 @@ class DesiPornX : MainAPI() {
         val href = fixUrl(this.selectFirst("a")?.attr("href") ?: return null)
         val posterUrl = fixUrlNull(this.selectFirst("img")?.attr("data-src") ?: this.selectFirst("img")?.attr("src"))
 
-        return newMovieSearchResponse(title, href, TvType.Adult) {
+        return newMovieSearchResponse(title, href, TvType.NSFW) {
             this.posterUrl = posterUrl
         }
     }
@@ -46,7 +46,7 @@ class DesiPornX : MainAPI() {
         val poster = fixUrlNull(document.selectFirst("meta[property='og:image']")?.attr("content"))
         val description = document.selectFirst("div.description")?.text()
 
-        return newMovieLoadResponse(title, url, TvType.Adult, url) {
+        return newMovieLoadResponse(title, url, TvType.NSFW, url) {
             this.posterUrl = poster
             this.plot = description
         }
@@ -60,18 +60,19 @@ class DesiPornX : MainAPI() {
     ): Boolean {
         val document = app.get(data).document
 
-        // Example: Extracting a direct video link or handling an iframe source
+        // Locate your video source URL from the page HTML
         val videoUrl = document.selectFirst("source")?.attr("src") ?: return false
 
         callback.invoke(
-            ExtractorLink(
+            newExtractorLink(
                 source = name,
                 name = name,
                 url = videoUrl,
-                referer = mainUrl,
-                quality = Qualities.P720.value,
-                isM3u8 = videoUrl.contains(".m3u8")
-            )
+                type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+            ) {
+                this.referer = mainUrl
+                this.quality = Qualities.P720.value
+            }
         )
 
         return true
