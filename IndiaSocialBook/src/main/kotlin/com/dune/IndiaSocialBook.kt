@@ -1,12 +1,13 @@
 package com.dune
 
+import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import org.jsoup.nodes.Element
 
 class IndiaSocialBook : MainAPI() {
-    override var mainUrl = "https://indiasocialbook.com/videos/"
+    override var mainUrl = "https://indiasocialbook.com"
     override var name = "IndiaSocialBook"
     override val hasMainPage = true
     override var lang = "en"
@@ -20,7 +21,7 @@ class IndiaSocialBook : MainAPI() {
     )
 
     override val mainPage = mainPageOf(
-        "$mainUrl/category/indian-sex-video/desi-porn/" to "Desi"
+        "$mainUrl/videos/" to "Videos"
     )
 
     override suspend fun getMainPage(
@@ -34,7 +35,7 @@ class IndiaSocialBook : MainAPI() {
         }
 
         val document = app.get(url, headers = mainHeaders).document
-        val items = document.select("article, div.item, div.post-box, div.video-item, div.masonry-item")
+        val items = document.select("article, div.item, div.post-box, div.video-item, div.masonry-item, div.elementor-post")
         val home = items.mapNotNull { it.toSearchResult() }
 
         return newHomePageResponse(
@@ -48,8 +49,11 @@ class IndiaSocialBook : MainAPI() {
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        val titleElement = this.selectFirst("h2 a, h3 a, a.title, h2.entry-title a") ?: return null
-        val title = titleElement.text().trim().ifBlank { return null }
+        val titleElement = this.selectFirst("h2 a, h3 a, a.title, h2.entry-title a, a.elementor-post__thumbnail__link") ?: return null
+        val title = titleElement.text().trim().ifBlank { 
+            titleElement.attr("title").trim()
+        }.ifBlank { return null }
+        
         val href = fixUrlNull(titleElement.attr("href")) ?: return null
         
         val imgElement = this.selectFirst("img")
@@ -68,7 +72,7 @@ class IndiaSocialBook : MainAPI() {
     override suspend fun search(query: String, page: Int): SearchResponseList {
         val searchUrl = "$mainUrl/page/$page/?s=$query"
         val document = app.get(searchUrl, headers = mainHeaders).document
-        val items = document.select("article, div.item, div.post-box, div.video-item, div.masonry-item")
+        val items = document.select("article, div.item, div.post-box, div.video-item, div.masonry-item, div.elementor-post")
         val results = items.mapNotNull { it.toSearchResult() }
 
         return newSearchResponseList(results, hasNext = results.isNotEmpty())
@@ -80,9 +84,9 @@ class IndiaSocialBook : MainAPI() {
         val title = document.selectFirst("h1.entry-title, h1")?.text()?.trim() ?: "Unknown Title"
         val poster = fixUrlNull(
             document.selectFirst("meta[property='og:image']")?.attr("content")
-                ?: document.selectFirst("div.post-thumbnail img, .entry-content img")?.attr("src")
+                ?: document.selectFirst("div.post-thumbnail img, .entry-content img, .elementor-post__thumbnail img")?.attr("src")
         )
-        val description = document.selectFirst("div.entry-content, .description")?.text()?.trim()
+        val description = document.selectFirst("div.entry-content, .description, .elementor-widget-theme-post-content")?.text()?.trim()
 
         return newMovieLoadResponse(title, url, TvType.Movie, url) {
             this.posterUrl = poster
@@ -97,21 +101,41 @@ class IndiaSocialBook : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val document = app.get(data, headers = mainHeaders).document
+        Log.d("IndiaSocialBook", "Loading Links for URL: $data")
+        val res = app.get(data, headers = mainHeaders)
+        val document = res.document
+        val htmlContent = res.text
 
-        // Locate all embedded iframes, sources, or external player links pointing to your registered extractors
-        val iframeLinks = document.select("iframe").mapNotNull { 
+        // 1. Harvest standard iframes and embed elements
+        val iframeLinks = document.select("iframe, embed, object").mapNotNull { 
             it.attr("src").ifEmpty { it.attr("data-src") } 
         }
-        val anchorLinks = document.select("a.external, .video-container a, .entry-content a").mapNotNull { 
+
+        // 2. Harvest anchor links pointing to video hosts inside content area
+        val anchorLinks = document.select("div.entry-content a, .video-container a, a.external").mapNotNull { 
             it.attr("href") 
         }
 
-        val allLinks = (iframeLinks + anchorLinks).distinct()
+        val allDiscoveredLinks = (iframeLinks + anchorLinks).distinct()
+        Log.d("IndiaSocialBook", "Discovered DOM links: $allDiscoveredLinks")
 
-        for (link in allLinks) {
-            if (link.isNotBlank()) {
-                loadExtractor(link, data, subtitleCallback, callback)
+        for (link in allDiscoveredLinks) {
+            if (link.isNotBlank() && (link.startsWith("http") || link.startsWith("//"))) {
+                val fixed = fixUrl(link)
+                Log.d("IndiaSocialBook", "Passing DOM link to loadExtractor: $fixed")
+                loadExtractor(fixed, data, subtitleCallback, callback)
+            }
+        }
+
+        // 3. Fallback: Parse hidden script blocks or embedded JSON players containing links
+        document.select("script").forEach { script ->
+            val scriptText = script.data()
+            // Match URLs inside script variables (e.g. file: "...", src: "...", or direct player URLs)
+            val regexMatches = Regex("""https?://[^\s"'<>]+?\.(?:m3u8|mp4|mkv)|https?://(?:www\.)?(?:streamwish|vidhide|dood|filemoon|voe|streamtape|lulustream)[^\s"'<>]+""").findAll(scriptText)
+            for (match in regexMatches) {
+                val scriptLink = match.value
+                Log.d("IndiaSocialBook", "Discovered Script Regex link: $scriptLink")
+                loadExtractor(scriptLink, data, subtitleCallback, callback)
             }
         }
 
