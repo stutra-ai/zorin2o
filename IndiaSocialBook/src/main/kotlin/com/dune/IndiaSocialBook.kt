@@ -3,6 +3,8 @@ package com.dune
 import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import com.lagradost.cloudstream3.mvvm.safeApiCall
+import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import org.jsoup.nodes.Element
 
 class IndiaSocialBook : MainAPI() {
@@ -103,71 +105,63 @@ class IndiaSocialBook : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         Log.d("IndiaSocialBook", "Loading Links for URL: $data")
-        val res = app.get(data, headers = mainHeaders)
-        val document = res.document
 
-        val videoSources = document.select("video source, audio source, .post-thumbnail video").mapNotNull {
-            it.attr("src").ifEmpty { it.attr("data-src") }
-        }
+        return safeApiCall {
+            val res = app.get(data, headers = mainHeaders)
+            val document = res.document
 
-        val directVideoTags = document.select("video").mapNotNull {
-            it.attr("src")
-        }
-
-        val iframeLinks = document.select("iframe, embed, object").mapNotNull {
-            it.attr("src").ifEmpty { it.attr("data-src") }
-        }
-
-        val anchorLinks = document.select("div.entry-content a, .video-container a, a.external").mapNotNull {
-            it.attr("href")
-        }
-
-        val allDiscoveredLinks = (videoSources + directVideoTags + iframeLinks + anchorLinks).distinct()
-        Log.d("IndiaSocialBook", "Discovered DOM links: $allDiscoveredLinks")
-
-        for (link in allDiscoveredLinks) {
-            if (link.isNotBlank() && (link.startsWith("http") || link.startsWith("//") || link.startsWith("/"))) {
-                val fixed = fixUrl(link)
-                Log.d("IndiaSocialBook", "Processing link: $fixed")
-
-                if (fixed.endsWith(".mp4", true) || fixed.contains(".m3u8")) {
-                    callback.invoke(
-                        ExtractorLink(
-                            source = name,
-                            name = name,
-                            url = fixed,
-                            referer = data,
-                            quality = Qualities.Unknown.value
+            // Process direct video links
+            document.select("video source, audio source, .post-thumbnail video").forEach { element ->
+                val src = element.attr("src").ifEmpty { element.attr("data-src") }
+                if (src.isNotBlank()) {
+                    val fixedUrl = fixUrl(src)
+                    if (fixedUrl.endsWith(".mp4", true) || fixedUrl.contains(".m3u8")) {
+                        callback.invoke(
+                            ExtractorLink(
+                                this.name,
+                                this.name,
+                                fixedUrl,
+                                mainUrl,
+                                Qualities.Unknown.value
+                            )
                         )
-                    )
-                } else {
-                    loadExtractor(fixed, data, subtitleCallback, callback)
+                    }
                 }
             }
-        }
 
-        document.select("script").forEach { script ->
-            val scriptText = script.data()
-            val regexMatches = Regex("""https?://[^\s"'<>]+?\.(?:m3u8|mp4|mkv)|https?://(?:www\.)?(?:streamwish|vidhide|dood|filemoon|voe|streamtape|lulustream)[^\s"'<>]+""").findAll(scriptText)
-            for (match in regexMatches) {
-                val scriptLink = match.value
-                Log.d("IndiaSocialBook", "Discovered Script Regex link: $scriptLink")
-                if (scriptLink.endsWith(".mp4", true) || scriptLink.contains(".m3u8")) {
-                    callback.invoke(
-                        ExtractorLink(
-                            source = name,
-                            name = name,
-                            url = scriptLink,
-                            referer = data,
-                            quality = Qualities.Unknown.value
-                        )
-                    )
-                } else {
-                    loadExtractor(scriptLink, data, subtitleCallback, callback)
+            // Process iframe links
+            document.select("iframe, embed, object").forEach { element ->
+                val src = element.attr("src").ifEmpty { element.attr("data-src") }
+                if (src.isNotBlank()) {
+                    val fixedUrl = fixUrl(src)
+                    loadExtractor(fixedUrl, data, subtitleCallback, callback)
                 }
             }
-        }
 
-        return true
+            // Process script links
+            document.select("script").forEach { script ->
+                val scriptText = script.data()
+                val regexMatches = Regex("""https?://[^\s"'<>]+?\.(?:m3u8|mp4|mkv)|https?://(?:www\.)?(?:streamwish|vidhide|dood|filemoon|voe|streamtape|lulustream)[^\s"'<>]+""").findAll(scriptText)
+                for (match in regexMatches) {
+                    val scriptLink = match.value
+                    Log.d("IndiaSocialBook", "Discovered Script Regex link: $scriptLink")
+                    if (scriptLink.endsWith(".mp4", true) || scriptLink.contains(".m3u8")) {
+                        callback.invoke(
+                            ExtractorLink(
+                                this.name,
+                                this.name,
+                                scriptLink,
+                                mainUrl,
+                                Qualities.Unknown.value
+                            )
+                        )
+                    } else {
+                        loadExtractor(scriptLink, data, subtitleCallback, callback)
+                    }
+                }
+            }
+
+            true
+        } ?: false
     }
 }
