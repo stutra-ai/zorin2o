@@ -74,13 +74,9 @@ class IndiaSocialBook : MainAPI() {
         val actors = document.select("span.actor-links a, .template-actors a").map { Actor(it.text()) }
         val recommendations = document.select("article.post, div.thumb-block").mapNotNull { it.toSearchResult() }
 
-        // Isolate strictly to the main post content area to avoid sidebars/recommendations leak
         val contentArea = document.selectFirst("div.entry-content, article.post") ?: document
-
-        // Collect tab items if available inside content
         val tabNavs = contentArea.select("div.video-tabs ul.tab-nav li, ul.tab-nav li")
         
-        // Collect valid content iframes inside content area only
         val validIframes = contentArea.select("iframe, embed").filter {
             val src = it.attr("src")
             !src.isNullOrBlank() && 
@@ -119,11 +115,9 @@ class IndiaSocialBook : MainAPI() {
                 }
             }.let { episodes.addAll(it) }
         } else {
-            // Single video source fallback
-            val singleIframe = validIframes.firstOrNull()?.attr("src")
-            val episodeData = if (!singleIframe.isNullOrBlank()) fixUrl(singleIframe) else url
+            // For single video pages, pass the main post url so loadLinks can parse the direct <source> / <video> tag
             episodes.add(
-                newEpisode(episodeData) {
+                newEpisode(url) {
                     this.name = title
                     this.episode = 1
                 }
@@ -249,7 +243,7 @@ class IndiaSocialBook : MainAPI() {
             data.substringBefore("#")
         }
 
-        // If data points directly to an iframe or specific player link
+        // Check if data is an external iframe/player link
         if (data.startsWith("http") && !data.contains("indiasocialbook.com/videos/")) {
             try {
                 if (loadExtractor(data, mainUrl, subtitleCallback, callback)) {
@@ -279,14 +273,13 @@ class IndiaSocialBook : MainAPI() {
             } catch (_: Exception) {}
         }
 
-        // Scrape strictly the content container of the target article page
+        // Scrape the target article page
         if (!foundLinks) {
             try {
                 if (targetUrl.isNotBlank()) {
                     val response = app.get(targetUrl, headers = headers)
                     val contentArea = response.document.selectFirst("div.entry-content, article.post") ?: response.document.body()
                     
-                    // If data has a specific tab hash or iframe index, target that specific element
                     if (data.contains("#tab_")) {
                         val tabIndex = data.substringAfter("#tab_").toIntOrNull() ?: 0
                         val tabPanes = contentArea.select("div.tab-pane, div.tab-content > div")
@@ -306,7 +299,7 @@ class IndiaSocialBook : MainAPI() {
                             }
                         }
                     } else {
-                        // General fallback on the scoped content area
+                        // For single video pages (or default entry), scan the scoped content area for <video> and <source> tags
                         if (extractFromElement(contentArea, targetUrl, headers, subtitleCallback, callback)) {
                             foundLinks = true
                         }
