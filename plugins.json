@@ -1,21 +1,21 @@
 [
     {
-        "url": "https://raw.githubusercontent.com/stutra-ai/zorin2o/builds/DesiPornX.cs3",
+        "url": "https://raw.githubusercontent.com/stutra-ai/zorin2o/builds/IndiaSocialBook.cs3",
         "status": 1,
-        "version": -1,
-        "name": "DesiPornX",
-        "internalName": "DesiPornX",
+        "version": 1,
+        "name": "IndiaSocialBook",
+        "internalName": "IndiaSocialBook",
         "authors": [
             "ByDune"
         ],
-        "description": "DesiX",
-        "fileSize": 14637,
+        "description": "ISB Videos",
+        "fileSize": 59332,
         "repositoryUrl": "https://github.com/stutra-ai/zorin2o",
         "language": "en",
         "tvTypes": [
             "NSFW"
         ],
         "apiVersion": 1,
-        "fileHash": "sha256-fbab936b23a41bcfe7ee5b3716167a5c5cf53f3b0cce231b8c46765f703c4222"
+        "fileHash": "sha256-55e7a2219551d1ec699f99eeef18d6ba10b06f858bd7213b2cef6a857bceb383"
     }
 ]
