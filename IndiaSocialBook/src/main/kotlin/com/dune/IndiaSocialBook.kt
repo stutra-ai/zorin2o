@@ -4,7 +4,6 @@ import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.mvvm.safeApiCall
-import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import org.jsoup.nodes.Element
 
 class IndiaSocialBook : MainAPI() {
@@ -117,12 +116,12 @@ class IndiaSocialBook : MainAPI() {
                     val fixedUrl = fixUrl(src)
                     if (fixedUrl.endsWith(".mp4", true) || fixedUrl.contains(".m3u8")) {
                         callback.invoke(
-                            ExtractorLink(
-                                this.name,
-                                this.name,
-                                fixedUrl,
-                                mainUrl,
-                                Qualities.Unknown.value
+                            newExtractorLink(
+                                source = this@IndiaSocialBook.name,
+                                name = this@IndiaSocialBook.name,
+                                url = fixedUrl,
+                                referer = mainUrl,
+                                quality = Qualities.Unknown.value
                             )
                         )
                     }
@@ -147,12 +146,12 @@ class IndiaSocialBook : MainAPI() {
                     Log.d("IndiaSocialBook", "Discovered Script Regex link: $scriptLink")
                     if (scriptLink.endsWith(".mp4", true) || scriptLink.contains(".m3u8")) {
                         callback.invoke(
-                            ExtractorLink(
-                                this.name,
-                                this.name,
-                                scriptLink,
-                                mainUrl,
-                                Qualities.Unknown.value
+                            newExtractorLink(
+                                source = this@IndiaSocialBook.name,
+                                name = this@IndiaSocialBook.name,
+                                url = scriptLink,
+                                referer = mainUrl,
+                                quality = Qualities.Unknown.value
                             )
                         )
                     } else {
