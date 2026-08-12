@@ -22,7 +22,19 @@ class DesiPornX : MainAPI() {
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
-        val document = app.get(request.data).document
+        // Handle pagination structure (e.g., /new/?p=2 or page-based URLs if applicable)
+        val url = if (page > 1) {
+            when {
+                request.data.contains("most_viewed") -> "$mainUrl/most_viewed/?p=$page"
+                request.data.contains("longest") -> "$mainUrl/longest/?p=$page"
+                request.data.contains("top_rated") -> "$mainUrl/top_rated/?p=$page"
+                else -> "$mainUrl/new/?p=$page"
+            }
+        } else {
+            request.data
+        }
+
+        val document = app.get(url).document
         val home = document.select("div.th").mapNotNull { it.toSearchResult() }
         return newHomePageResponse(request.name, home)
     }
@@ -65,11 +77,31 @@ class DesiPornX : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val document = app.get(data).document
+        val html = document.html()
 
-        // Scrapes video sources embedded in the player (e.g. source tags or fluid player configurations)
-        val videoUrl = document.selectFirst("video source")?.attr("src") 
+        var videoUrl = document.selectFirst("video source")?.attr("src") 
             ?: document.selectFirst("source")?.attr("src") 
-            ?: return false
+            ?: document.selectFirst("video")?.attr("src")
+
+        if (videoUrl.isNullOrBlank()) {
+            val patterns = listOf(
+                """file\s*:\s*["'](https?://[^"']+\.(?:mp4|m3u8)[^"']*)["']""".toRegex(),
+                """src\s*:\s*["'](https?://[^"']+\.(?:mp4|m3u8)[^"']*)["']""".toRegex(),
+                """(https?://[^\s"'<>]+?\.(?:mp4|m3u8)[^\s"'<>]*)""".toRegex()
+            )
+            
+            for (regex in patterns) {
+                val match = regex.find(html)
+                if (match != null) {
+                    videoUrl = match.groupValues[1]
+                    break
+                }
+            }
+        }
+
+        if (videoUrl.isNullOrBlank()) return false
+
+        videoUrl = fixUrl(videoUrl)
 
         callback.invoke(
             newExtractorLink(
