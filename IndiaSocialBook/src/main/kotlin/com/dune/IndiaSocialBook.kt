@@ -89,32 +89,77 @@ class IndiaSocialBook : MainAPI() {
         val document = app.get(data).document
         var foundLinks = false
 
-        // Select iframes, embeds, and video sources
-        val elements = document.select("iframe, embed, video source, div.post-thumbnail video, .video-container iframe, .entry-content iframe")
-
-        for (element in elements) {
-            val src = element.attr("src").takeIf { !it.isNullOrBlank() && it != "about:blank" }
+        // 1. Prioritize HTML5 video elements and source tags (handling custom attributes like __cporiginalvalueofsrc)
+        val videoElements = document.select("video, video source, source")
+        for (element in videoElements) {
+            val src = element.attr("__cporiginalvalueofsrc")
+                .takeIf { !it.isNullOrBlank() }
+                ?: element.attr("src")
+                .takeIf { !it.isNullOrBlank() && it != "about:blank" }
                 ?: element.attr("data-src")
                 ?: element.attr("data-url")
-                ?: element.attr("data-lazy-src")
+                ?: element.attr("nitro-lazy-src")
 
             if (!src.isNullOrBlank() && !src.startsWith("data:")) {
                 val videoUrl = fixUrl(src)
 
-                // If it's an iframe/embed or not a direct file, pass to loadExtractor
                 if (element.tagName() == "iframe" || element.tagName() == "embed" || 
-                    (!videoUrl.endsWith(".mp4", true) && !videoUrl.endsWith(".m3u8", true))) {
+                    (!videoUrl.endsWith(".mp4", true) && !videoUrl.endsWith(".m3u8", true) && !videoUrl.contains("mp4"))) {
                     
                     if (loadExtractor(videoUrl, data, subtitleCallback, callback)) {
                         foundLinks = true
                     }
                 } else {
-                    // Handle direct video file links
                     callback.invoke(
                         newExtractorLink(
                             name = name,
                             source = name,
                             url = videoUrl,
+                            type = ExtractorLinkType.VIDEO
+                        ) {
+                            this.referer = mainUrl
+                            this.quality = Qualities.Unknown.value
+                        }
+                    )
+                    foundLinks = true
+                }
+            }
+        }
+
+        // 2. Check standard iframes and player embed containers
+        val iframes = document.select("iframe, embed")
+        for (iframe in iframes) {
+            val src = iframe.attr("src")
+                .takeIf { !it.isNullOrBlank() && it != "about:blank" }
+                ?: iframe.attr("data-src")
+                ?: iframe.attr("data-url")
+
+            if (!src.isNullOrBlank() && !src.startsWith("data:")) {
+                val iframeUrl = fixUrl(src)
+                if (loadExtractor(iframeUrl, data, subtitleCallback, callback)) {
+                    foundLinks = true
+                }
+            }
+        }
+
+        // 3. Fallback: Parse script tags and raw HTML for embedded stream links (.mp4 or .m3u8)
+        val html = document.html()
+        val regexPatterns = listOf(
+            "\"(https?://[^\"]+\\.(?:mp4|m3u8|mkv)[^\"]*)\()\"".toRegex(),
+            "src=[\"'](https?://[^\"']+\\.(?:mp4|m3u8|mkv)[^\"']*)[\"']".toRegex(),
+            "__cporiginalvalueofsrc=[\"'](https?://[^\"']+)[\"']".toRegex()
+        )
+
+        for (pattern in regexPatterns) {
+            for (match in pattern.findAll(html)) {
+                val matchUrl = match.groupValues[1]
+                if (!matchUrl.contains("googlesyndication") && !matchUrl.contains("facebook") && !matchUrl.contains("twitter")) {
+                    val fixed = fixUrl(matchUrl)
+                    callback.invoke(
+                        newExtractorLink(
+                            name = name,
+                            source = name,
+                            url = fixed,
                             type = ExtractorLinkType.VIDEO
                         ) {
                             this.referer = mainUrl
