@@ -1,5 +1,24 @@
 [
     {
+        "url": "https://raw.githubusercontent.com/stutra-ai/zorin2o/builds/DesiPornX.cs3",
+        "status": 1,
+        "version": 1,
+        "name": "DesiPornX",
+        "internalName": "DesiPornX",
+        "authors": [
+            "ByDune"
+        ],
+        "description": "DesiPornX",
+        "fileSize": 12555,
+        "repositoryUrl": "https://github.com/stutra-ai/zorin2o",
+        "language": "en",
+        "tvTypes": [
+            "NSFW"
+        ],
+        "apiVersion": 1,
+        "fileHash": "sha256-0b38f9e6fa35f588c3eec4e2e8c6a9abd65b294eb0e1d8415449859ef3ff60df"
+    },
+    {
         "url": "https://raw.githubusercontent.com/stutra-ai/zorin2o/builds/IndiaSocialBook.cs3",
         "status": 1,
         "version": 1,
