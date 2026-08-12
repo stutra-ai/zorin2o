@@ -10,7 +10,7 @@ class IndiaSocialBook : MainAPI() {
     override var name = "IndiaSocialBook"
     override val hasMainPage = true
     override var lang = "en"
-    override val hasQuickSearch = false
+    override val hasQuickSearch = true
     override val supportedTypes = setOf(TvType.NSFW)
 
     override val mainPage = mainPageOf(
@@ -89,22 +89,40 @@ class IndiaSocialBook : MainAPI() {
         val document = app.get(data).document
         var foundLinks = false
 
-        document.select("video source, iframe, div.post-thumbnail video").forEach { element ->
-            val src = element.attr("src").takeIf { it.isNotBlank() } ?: element.attr("data-src")
-            if (!src.isNullOrBlank()) {
+        // Select iframes, embeds, and video sources
+        val elements = document.select("iframe, embed, video source, div.post-thumbnail video, .video-container iframe, .entry-content iframe")
+
+        for (element in elements) {
+            val src = element.attr("src").takeIf { !it.isNullOrBlank() && it != "about:blank" }
+                ?: element.attr("data-src")
+                ?: element.attr("data-url")
+                ?: element.attr("data-lazy-src")
+
+            if (!src.isNullOrBlank() && !src.startsWith("data:")) {
                 val videoUrl = fixUrl(src)
-                callback.invoke(
-                    newExtractorLink(
-                        name = name,
-                        source = name,
-                        url = videoUrl,
-                        type = ExtractorLinkType.VIDEO
-                    ) {
-                        this.referer = mainUrl
-                        this.quality = Qualities.Unknown.value
+
+                // If it's an iframe/embed or not a direct file, pass to loadExtractor
+                if (element.tagName() == "iframe" || element.tagName() == "embed" || 
+                    (!videoUrl.endsWith(".mp4", true) && !videoUrl.endsWith(".m3u8", true))) {
+                    
+                    if (loadExtractor(videoUrl, data, subtitleCallback, callback)) {
+                        foundLinks = true
                     }
-                )
-                foundLinks = true
+                } else {
+                    // Handle direct video file links
+                    callback.invoke(
+                        newExtractorLink(
+                            name = name,
+                            source = name,
+                            url = videoUrl,
+                            type = ExtractorLinkType.VIDEO
+                        ) {
+                            this.referer = mainUrl
+                            this.quality = Qualities.Unknown.value
+                        }
+                    )
+                    foundLinks = true
+                }
             }
         }
 
