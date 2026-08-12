@@ -74,14 +74,26 @@ class IndiaSocialBook : MainAPI() {
         val actors = document.select("span.actor-links a, .template-actors a").map { Actor(it.text()) }
         val recommendations = document.select("article.post, div.thumb-block").mapNotNull { it.toSearchResult() }
 
-        // Parse tab items or multi-iframes
+        // Collect tab items if available
         val tabNavs = document.select("div.video-tabs ul.tab-nav li, ul.tab-nav li")
         
-        val episodes = if (tabNavs.isNotEmpty()) {
+        // Collect all valid content iframes/embeds across the page
+        val validIframes = document.select("article iframe, div.entry-content iframe, div.video-container iframe, iframe").filter {
+            val src = it.attr("src")
+            !src.isNullOrBlank() && 
+            src != "about:blank" && 
+            !src.contains("googlesyndication") && 
+            !src.contains("facebook") && 
+            !src.contains("twitter") &&
+            !src.contains("histats")
+        }
+
+        val episodes = mutableList()
+
+        if (tabNavs.isNotEmpty()) {
             tabNavs.mapIndexed { index, el ->
                 val tabName = el.text().trim().ifEmpty { "Part ${index + 1}" }
                 val targetTabId = el.attr("data-tab")
-                
                 val iframeSrc = if (targetTabId.isNotBlank()) {
                     document.selectFirst("div.tab-content div#$targetTabId iframe, div#$targetTabId iframe")?.attr("src")
                 } else null
@@ -93,32 +105,26 @@ class IndiaSocialBook : MainAPI() {
                     this.name = tabName
                     this.episode = index + 1
                 }
-            }
-        } else {
-            val fallbackIframes = document.select("div.video-tabs div.tab-pane iframe, iframe").filter { 
-                val src = it.attr("src")
-                !src.isNullOrBlank() && src != "about:blank"
-            }
-            
-            if (fallbackIframes.size > 1) {
-                fallbackIframes.mapIndexed { index, iframe ->
-                    val iframeSrc = iframe.attr("src")
-                    val episodeData = if (!iframeSrc.isNullOrBlank()) fixUrl(iframeSrc) else "$url#tab_$index"
-                    newEpisode(episodeData) {
-                        this.name = "Part ${index + 1}"
-                        this.episode = index + 1
-                    }
+            }.let { episodes.addAll(it) }
+        } else if (validIframes.size > 1) {
+            validIframes.mapIndexed { index, iframe ->
+                val iframeSrc = iframe.attr("src")
+                val episodeData = if (!iframeSrc.isNullOrBlank()) fixUrl(iframeSrc) else "$url#iframe_$index"
+                newEpisode(episodeData) {
+                    this.name = "Part ${index + 1}"
+                    this.episode = index + 1
                 }
-            } else {
-                val singleIframe = fallbackIframes.firstOrNull()?.attr("src")
-                val episodeData = if (!singleIframe.isNullOrBlank()) fixUrl(singleIframe) else url
-                listOf(
-                    newEpisode(episodeData) {
-                        this.name = title
-                        this.episode = 1
-                    }
-                )
-            }
+            }.let { episodes.addAll(it) }
+        } else {
+            // Single video source fallback
+            val singleIframe = validIframes.firstOrNull()?.attr("src")
+            val episodeData = if (!singleIframe.isNullOrBlank()) fixUrl(singleIframe) else url
+            episodes.add(
+                newEpisode(episodeData) {
+                    this.name = title
+                    this.episode = 1
+                }
+            )
         }
 
         return if (episodes.size > 1) {
@@ -288,21 +294,49 @@ class IndiaSocialBook : MainAPI() {
             data.substringBefore("#")
         }
 
-        try {
-            if (targetUrl.isNotBlank()) {
-                val response = app.get(targetUrl, headers = headers)
-                if (extractFromDoc(response.document, targetUrl, headers, subtitleCallback, callback)) {
-                    foundLinks = true
-                }
-            }
-        } catch (_: Exception) {}
-
-        if (!foundLinks && data.contains("#tab_")) {
-            val parentUrl = data.substringBefore("#")
+        // If data points directly to an iframe or player URL, try extracting from it directly first
+        if (data.startsWith("http") && !data.contains("indiasocialbook.com/videos/")) {
             try {
-                val parentDoc = app.get(parentUrl, headers = headers).document
-                if (extractFromDoc(parentDoc, parentUrl, headers, subtitleCallback, callback)) {
+                if (loadExtractor(data, mainUrl, subtitleCallback, callback)) {
                     foundLinks = true
+                } else if (data.contains("player-x.php?q=")) {
+                    val base64Query = data.substringAfter("q=").substringBefore("&")
+                    val decodedBytes = Base64.decode(base64Query, Base64.DEFAULT)
+                    val decodedString = String(decodedBytes, Charsets.UTF_8)
+                    val srcRegex = "src=[\"'](https?://[^\"']+)[\"']".toRegex(RegexOption.IGNORE_CASE)
+                    for (match in srcRegex.findAll(decodedString)) {
+                        val videoUrl = match.groups[1]?.value ?: continue
+                        val type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                        callback.invoke(
+                            newExtractorLink(
+                                name = name,
+                                source = name,
+                                url = videoUrl,
+                                type = type
+                            ) {
+                                this.referer = data
+                                this.quality = Qualities.Unknown.value
+                            }
+                        )
+                        foundLinks = true
+                    }
+                } else {
+                    val iframeDoc = app.get(data, headers = headers).document
+                    if (extractFromDoc(iframeDoc, data, headers, subtitleCallback, callback)) {
+                        foundLinks = true
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        // If not found yet, scrape the target page URL document
+        if (!foundLinks) {
+            try {
+                if (targetUrl.isNotBlank()) {
+                    val response = app.get(targetUrl, headers = headers)
+                    if (extractFromDoc(response.document, targetUrl, headers, subtitleCallback, callback)) {
+                        foundLinks = true
+                    }
                 }
             } catch (_: Exception) {}
         }
