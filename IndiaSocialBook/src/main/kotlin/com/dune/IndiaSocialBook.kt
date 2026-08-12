@@ -115,13 +115,14 @@ class IndiaSocialBook : MainAPI() {
                     val fixedUrl = fixUrl(src)
                     if (fixedUrl.endsWith(".mp4", true) || fixedUrl.contains(".m3u8")) {
                         callback.invoke(
-                            ExtractorLink(
+                            newExtractorLink(
                                 source = this@IndiaSocialBook.name,
                                 name = this@IndiaSocialBook.name,
                                 url = fixedUrl,
-                                referer = mainUrl,
                                 quality = Qualities.Unknown.value
-                            )
+                            ) {
+                                this.referer = mainUrl
+                            }
                         )
                     }
                 }
@@ -145,13 +146,14 @@ class IndiaSocialBook : MainAPI() {
                     Log.d("IndiaSocialBook", "Discovered Script Regex link: $scriptLink")
                     if (scriptLink.endsWith(".mp4", true) || scriptLink.contains(".m3u8")) {
                         callback.invoke(
-                            ExtractorLink(
+                            newExtractorLink(
                                 source = this@IndiaSocialBook.name,
                                 name = this@IndiaSocialBook.name,
                                 url = scriptLink,
-                                referer = mainUrl,
                                 quality = Qualities.Unknown.value
-                            )
+                            ) {
+                                this.referer = mainUrl
+                            }
                         )
                     } else {
                         loadExtractor(scriptLink, data, subtitleCallback, callback)
