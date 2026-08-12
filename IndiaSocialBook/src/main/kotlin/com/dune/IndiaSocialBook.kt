@@ -118,9 +118,9 @@ class IndiaSocialBook : MainAPI() {
                             newExtractorLink(
                                 source = this@IndiaSocialBook.name,
                                 name = this@IndiaSocialBook.name,
-                                url = fixedUrl,
-                                quality = Qualities.Unknown.value
+                                url = fixedUrl
                             ) {
+                                this.quality = Qualities.Unknown.value
                                 this.referer = mainUrl
                             }
                         )
@@ -149,9 +149,9 @@ class IndiaSocialBook : MainAPI() {
                             newExtractorLink(
                                 source = this@IndiaSocialBook.name,
                                 name = this@IndiaSocialBook.name,
-                                url = scriptLink,
-                                quality = Qualities.Unknown.value
+                                url = scriptLink
                             ) {
+                                this.quality = Qualities.Unknown.value
                                 this.referer = mainUrl
                             }
                         )
