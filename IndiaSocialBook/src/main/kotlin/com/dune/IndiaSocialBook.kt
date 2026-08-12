@@ -89,7 +89,7 @@ class IndiaSocialBook : MainAPI() {
         val document = app.get(data).document
         var foundLinks = false
 
-        // 1. Prioritize HTML5 video elements and source tags (handling custom attributes like __cporiginalvalueofsrc)
+        // 1. Prioritize HTML5 video elements, source tags, and attributes like __cporiginalvalueofsrc
         val videoElements = document.select("video, video source, source")
         for (element in videoElements) {
             val src = element.attr("__cporiginalvalueofsrc")
@@ -145,7 +145,7 @@ class IndiaSocialBook : MainAPI() {
         // 3. Fallback: Parse script tags and raw HTML for embedded stream links (.mp4 or .m3u8)
         val html = document.html()
         val regexPatterns = listOf(
-            "\"(https?://[^\"]+\\.(?:mp4|m3u8|mkv)[^\"]*)\()\"".toRegex(),
+            "\"(https?://[^\"]+\\.(?:mp4|m3u8|mkv)[^\"]*)\"".toRegex(),
             "src=[\"'](https?://[^\"']+\\.(?:mp4|m3u8|mkv)[^\"']*)[\"']".toRegex(),
             "__cporiginalvalueofsrc=[\"'](https?://[^\"']+)[\"']".toRegex()
         )
