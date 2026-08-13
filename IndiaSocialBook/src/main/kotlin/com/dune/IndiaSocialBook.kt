@@ -140,7 +140,17 @@ class IndiaSocialBook : MainAPI() {
             if (!src.isNullOrBlank() && !src.startsWith("data:")) {
                 val videoUrl = fixUrl(src)
                 val type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                callback.invoke(newExtractorLink(name, name, videoUrl, currentReferer, type = type) { this.quality = Qualities.Unknown.value })
+                callback.invoke(
+                    newExtractorLink(
+                        source = name,
+                        name = name,
+                        url = videoUrl,
+                        referer = currentReferer,
+                        type = type
+                    ) {
+                        this.quality = Qualities.Unknown.value
+                    }
+                )
                 foundLinks = true
             }
         }
@@ -153,7 +163,17 @@ class IndiaSocialBook : MainAPI() {
             if (!url.contains("googlesyndication") && !url.contains("magsrv") && !url.contains("ad-provider")) {
                 val videoUrl = fixUrl(url)
                 val type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                callback.invoke(newExtractorLink(name, name, videoUrl, currentReferer, type = type) { this.quality = Qualities.Unknown.value })
+                callback.invoke(
+                    newExtractorLink(
+                        source = name,
+                        name = name,
+                        url = videoUrl,
+                        referer = currentReferer,
+                        type = type
+                    ) {
+                        this.quality = Qualities.Unknown.value
+                    }
+                )
                 foundLinks = true
             }
         }
