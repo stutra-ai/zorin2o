@@ -8,7 +8,7 @@ import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.net.URLDecoder
 
-class IndiaSocialBook : MainAPI() {
+class DesiPornX : MainAPI() {
     override var mainUrl = "https://desipornx.org"
     override var name = "DesiPornX"
     override val hasMainPage = true
