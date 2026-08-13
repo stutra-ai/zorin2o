@@ -13,9 +13,10 @@ class DesiPornX : MainAPI() {
     override val hasQuickSearch = false
     override val supportedTypes = setOf(TvType.NSFW)
 
+    // Standard desktop headers to avoid basic bot detection and 403 blocks
     private val headers = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language" to "en-US,en;q=0.5",
         "Referer" to "$mainUrl/"
     )
@@ -31,21 +32,12 @@ class DesiPornX : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = if (page <= 1) request.data else "${request.data.removeSuffix("/")}/$page/"
         
-        Log.d(name, "Fetching URL: $url")
         val res = app.get(url, headers = headers)
-        
-        Log.d(name, "Response Code: ${res.code}")
-        Log.d(name, "Response Body Length: ${res.text.length}")
-        
-        if (res.text.length < 500) {
-            Log.d(name, "Suspiciously short response body (possible block/captcha): ${res.text}")
-        }
-
         val document = res.document
+        
+        // Select elements matching the HTML structure provided
         val home = document.select("div.th").mapNotNull { it.toSearchResult() }
         
-        Log.d(name, "Parsed items count: ${home.size}")
-
         return newHomePageResponse(HomePageList(request.name, home, true), true)
     }
 
@@ -113,6 +105,7 @@ class DesiPornX : MainAPI() {
             val document = res.document
             val fullHtml = res.text
 
+            // 1. Check standard HTML tags: <video>, <source>, <iframe>, <embed>
             val elements = document.select("video, source, iframe, embed")
             for (el in elements) {
                 val src = el.attr("src").ifEmpty { el.attr("data-src") }
@@ -135,6 +128,7 @@ class DesiPornX : MainAPI() {
                 }
             }
 
+            // 2. Scan script tags and raw HTML for direct streams (.mp4, .m3u8, .mov, .webm)
             val urlRegex = """(https?://[^\s"'+\\]+?\.(?:mp4|m3u8|mov|webm)[^\s"'+\\]*)""".toRegex()
             urlRegex.findAll(fullHtml).forEach { match ->
                 val foundUrl = fixUrl(match.value)
