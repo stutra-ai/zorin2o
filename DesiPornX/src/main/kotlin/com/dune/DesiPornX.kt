@@ -1,3 +1,4 @@
+// DesiPornX.kt
 package com.dune
 
 import com.lagradost.api.Log
@@ -81,7 +82,7 @@ class DesiPornX : MainAPI() {
             this.tags = tags
             this.duration = duration
             this.recommendations = recommendations
-            addActors(actors)   // Now resolved correctly via the static import
+            addActors(actors)
         }
     }
 
@@ -148,7 +149,7 @@ class DesiPornX : MainAPI() {
                                 this.quality = getQualityFromName(quality)
                             }
                         )
-                        videourl = true
+                        videolink = true
                     }
                 }
             val hlsmatch = """"srcFallback"\s*:\s*"(https?://[^"]+\.m3u8[^"]*)"""".toRegex().find(responsetext)
