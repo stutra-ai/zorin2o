@@ -19,7 +19,7 @@ class Analsee : MainAPI() {
         "$mainUrl/videos/?sort_by=rating" to "Top Rated"
     )
 
-    private val standardHeaders = mapOf(
+    private val headers = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
         "Accept-Language" to "en-US,en;q=0.9",
@@ -38,7 +38,8 @@ class Analsee : MainAPI() {
             }
         }
 
-        val document = app.get(url, headers = standardHeaders).document
+        // app.get handles requests with internal cookie tracking
+        val document = app.get(url, headers = headers).document
         val home = document.select("div.th").mapNotNull { it.toSearchResult() }
         return newHomePageResponse(HomePageList(request.name, home, true), true)
     }
@@ -46,7 +47,7 @@ class Analsee : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         val formattedQuery = query.replace(" ", "-")
         val url = "$mainUrl/search/$formattedQuery/"
-        val document = app.get(url, headers = standardHeaders).document
+        val document = app.get(url, headers = headers).document
         return document.select("div.th").mapNotNull { it.toSearchResult() }
     }
 
@@ -73,7 +74,7 @@ class Analsee : MainAPI() {
     override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query)
 
     override suspend fun load(url: String): LoadResponse? {
-        val document = app.get(url, headers = standardHeaders).document
+        val document = app.get(url, headers = headers).document
         
         val title = document.selectFirst("h1.title")?.text()?.trim() 
             ?: document.selectFirst("h1")?.text()?.trim()
@@ -99,7 +100,7 @@ class Analsee : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val document = app.get(data, headers = standardHeaders).document
+        val document = app.get(data, headers = headers).document
         val scriptContent = document.select("script").html()
         
         var found = false
