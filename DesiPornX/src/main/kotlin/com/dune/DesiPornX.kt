@@ -13,6 +13,9 @@ class DesiPornX : MainAPI() {
     override val hasQuickSearch = false
     override val supportedTypes = setOf(TvType.NSFW)
 
+    // Standard headers to prevent 403 blocks
+    private val headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/53.36")
+
     override val mainPage = mainPageOf(
         "$mainUrl/" to "Most Recent",
         "$mainUrl/most_viewed/" to "Most Popular",
@@ -22,17 +25,24 @@ class DesiPornX : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = if (page <= 1) request.data else "${request.data.removeSuffix("/")}/$page/"
-        val document = app.get(url).document
+        // Logic: if page 1, use base url. If page > 1, add /page/number/
+        val url = if (page <= 1) request.data else "${request.data.removeSuffix("/")}/page/$page/"
+        
+        val res = app.get(url, headers = headers)
+        val document = res.document
         val home = document.select("div.th").mapNotNull { it.toSearchResult() }
+        
         return newHomePageResponse(HomePageList(request.name, home, true), true)
     }
 
     override suspend fun search(query: String, page: Int): SearchResponseList {
-        val formattedQuery = query.replace(" ", "-")
-        val url = if (page <= 1) "$mainUrl/search/$formattedQuery/" else "$mainUrl/search/$formattedQuery/$page/"
-        val document = app.get(url).document
+        val formattedQuery = query.replace(" ", "+")
+        val url = if (page <= 1) "$mainUrl/search/$formattedQuery/" else "$mainUrl/search/$formattedQuery/page/$page/"
+        
+        val res = app.get(url, headers = headers)
+        val document = res.document
         val results = document.select("div.th").mapNotNull { it.toSearchResult() }
+        
         return newSearchResponseList(results, true)
     }
 
@@ -41,32 +51,19 @@ class DesiPornX : MainAPI() {
         val title = this.selectFirst("span.th_nm")?.text() ?: titleElement.text()
         val img = this.selectFirst("img")
 
-        val poster = fixUrlNull(
-            img?.attr("data-src")?.takeIf { it.isNotEmpty() && !it.startsWith("data:") }
-                ?: img?.attr("src")
-        )
+        val poster = fixUrlNull(img?.attr("data-src") ?: img?.attr("src"))
 
-        return newMovieSearchResponse(
-            title,
-            fixUrl(titleElement.attr("href")),
-            TvType.NSFW
-        ) {
+        return newMovieSearchResponse(title, fixUrl(titleElement.attr("href")), TvType.NSFW) {
             this.posterUrl = poster
         }
     }
 
-    override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query)
-
     override suspend fun load(url: String): LoadResponse? {
-        val document = app.get(url).document
-        val title = document.selectFirst("h1")?.text()?.trim() 
-            ?: document.selectFirst("meta[property=og:title]")?.attr("content")?.trim() 
-            ?: "DesiPornX Video"
+        val res = app.get(url, headers = headers)
+        val document = res.document
         
-        val poster = fixUrlNull(
-            document.selectFirst("meta[property=og:image]")?.attr("content")
-        )
-        
+        val title = document.selectFirst("h1")?.text()?.trim() ?: "DesiPornX Video"
+        val poster = fixUrlNull(document.selectFirst("meta[property=og:image]")?.attr("content"))
         val description = document.selectFirst("meta[property=og:description]")?.attr("content")?.trim()
         val recommendations = document.select("div.th").mapNotNull { it.toSearchResult() }
 
@@ -83,86 +80,27 @@ class DesiPornX : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val url = fixUrl(data)
-        var videolink = false
+        val res = app.get(data, headers = headers)
+        val html = res.text
 
-        try {
-            val res = app.get(url)
-            val document = res.document
-            val fullHtml = res.text
-
-            Log.d(name, "Fetching video page: $url (Status: ${res.code})")
-
-            // 1. Check standard HTML tags: <video>, <source>, <iframe>, <embed>, <object>
-            val elements = document.select("video, source, iframe, embed, object")
-            for (el in elements) {
-                val src = el.attr("src").ifEmpty { el.attr("data-src") }.ifEmpty { el.attr("data-url") }
-                if (src.isNotEmpty()) {
-                    val resolved = fixUrl(src)
-                    if (!resolved.contains("ads") && !resolved.endsWith(".js") && !resolved.contains("banner")) {
-                        Log.d(name, "Found link via tag element: $resolved")
-                        callback.invoke(
-                            newExtractorLink(
-                                name = name,
-                                source = name,
-                                url = resolved,
-                                type = ExtractorLinkType.VIDEO
-                            ) {
-                                this.referer = mainUrl
-                                this.quality = Qualities.Unknown.value
-                            }
-                        )
-                        videolink = true
-                    }
-                }
-            }
-
-            // 2. Comprehensive raw text/script scanning for file URLs or embedded player variables
-            val urlRegex = """(https?://[^\s"'+\\]+?\.(?:mp4|m3u8|mov|webm|ts)[^\s"'+\\]*)""".toRegex()
-            urlRegex.findAll(fullHtml).forEach { match ->
-                val foundUrl = fixUrl(match.value)
-                if (!foundUrl.contains("ads") && !foundUrl.contains("banner") && !foundUrl.endsWith(".js")) {
-                    Log.d(name, "Found link via global regex: $foundUrl")
-                    callback.invoke(
-                        newExtractorLink(
-                            name = name,
-                            source = name,
-                            url = foundUrl,
-                            type = ExtractorLinkType.VIDEO
-                        ) {
-                            this.referer = mainUrl
-                            this.quality = Qualities.Unknown.value
-                        }
-                    )
-                    videolink = true
-                }
-            }
-
-            // 3. Fallback: Check if the site uses a specific custom embedded player or player variables in scripts
-            val jsVarRegex = """(?:file|src|url|video_url|play_url)\s*[:=]\s*["'](https?://[^"']+)["']""".toRegex()
-            jsVarRegex.findAll(fullHtml).forEach { match ->
-                val foundUrl = fixUrl(match.groupValues[1])
-                if (!foundUrl.contains("ads") && !foundUrl.endsWith(".js")) {
-                    Log.d(name, "Found link via JS variable pattern: $foundUrl")
-                    callback.invoke(
-                        newExtractorLink(
-                            name = name,
-                            source = name,
-                            url = foundUrl,
-                            type = ExtractorLinkType.VIDEO
-                        ) {
-                            this.referer = mainUrl
-                            this.quality = Qualities.Unknown.value
-                        }
-                    )
-                    videolink = true
-                }
-            }
-
-        } catch (e: Exception) {
-            Log.d(name, "Error loading links: ${e.message}")
+        // 1. Check for iframe sources (common for embedded players)
+        val iframeSrc = res.document.selectFirst("iframe")?.attr("src")
+        if (!iframeSrc.isNullOrEmpty()) {
+            val resolved = fixUrl(iframeSrc)
+            callback.invoke(newExtractorLink(name, name, resolved, ExtractorLinkType.VIDEO) { this.referer = data })
         }
 
-        return videolink
+        // 2. Regex scan for direct stream URLs (.mp4, .m3u8)
+        val urlRegex = """(https?://[^\s"'+\\]+?\.(?:mp4|m3u8|webm)[^\s"'+\\]*)""".toRegex()
+        urlRegex.findAll(html).forEach { match ->
+            val foundUrl = match.value.replace("\\", "")
+            if (!foundUrl.contains("ads") && !foundUrl.contains("doubleclick")) {
+                callback.invoke(newExtractorLink(name, name, foundUrl, ExtractorLinkType.VIDEO) {
+                    this.referer = data
+                })
+            }
+        }
+
+        return true
     }
 }
