@@ -123,7 +123,7 @@ class DesiPornX : MainAPI() {
                 BigInteger(chunk, 16).toString(36)
             }.joinToString("")
             Log.d(name, "vid: $vid - hash: $convertedhash")
-            val xhrurl = "$mainUrl/xhr/video/$vid?hash=$convertedhash&domain=www.eporner.com&pixelRatio=1&playerWidth=0&playerHeight=0&fallback=false&embed=true&supportedFormats=hls,dash,h265,vp9,av1,mp4&_=${System.currentTimeMillis()}"
+            val xhrurl = "$mainUrl/xhr/video/$vid?hash=$convertedhash&domain=desipornx.org&pixelRatio=1&playerWidth=0&playerHeight=0&fallback=false&embed=true&supportedFormats=hls,dash,h265,vp9,av1,mp4&_=${System.currentTimeMillis()}"
             val responsetext = app.get(
                 xhrurl,
                 headers = mapOf(
