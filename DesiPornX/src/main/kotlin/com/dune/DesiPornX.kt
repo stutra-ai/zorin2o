@@ -73,6 +73,7 @@ class DesiPornX : MainAPI() {
         val recommendations =
             document.select("div#relateddiv div.mb").mapNotNull { it.toRecommendationResult() }
         val actors = document.select("span.valor a").map { Actor(it.text()) }
+
         return newMovieLoadResponse(title, url, TvType.NSFW, url) {
             this.posterUrl = poster
             this.plot = description
@@ -80,7 +81,7 @@ class DesiPornX : MainAPI() {
             this.tags = tags
             this.duration = duration
             this.recommendations = recommendations
-            addActors(actors)
+            addActors(actors)   // Extension function from Companion
         }
     }
 
