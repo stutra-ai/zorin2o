@@ -39,8 +39,7 @@ class Analsee : MainAPI() {
             )
         ).document
 
-        // Broad fallback selectors to catch grid items regardless of specific layout variants
-        val home = document.select("div.th, div.item, div.video-item, div.thumb-block").mapNotNull { it.toSearchResult() }
+        val home = document.select("div.th").mapNotNull { it.toSearchResult() }
         return newHomePageResponse(HomePageList(request.name, home, true), true)
     }
 
@@ -54,22 +53,26 @@ class Analsee : MainAPI() {
                 "Referer" to "$mainUrl/"
             )
         ).document
-        return document.select("div.th, div.item, div.video-item, div.thumb-block").mapNotNull { it.toSearchResult() }
+        return document.select("div.th").mapNotNull { it.toSearchResult() }
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        val linkElement = this.selectFirst("a.thumb") ?: this.selectFirst("a") ?: return null
+        // Grab any anchor link inside the th container
+        val linkElement = this.selectFirst("a") ?: return null
         val href = fixUrl(linkElement.attr("href"))
-        
+        if (href.isBlank()) return null
+
+        // Try to get the image from data-src, data-original, or standard src
         val img = this.selectFirst("img")
-        val poster = img?.attr("data-src")?.ifEmpty { null } 
-            ?: img?.attr("data-original")?.ifEmpty { null }
+        val poster = img?.attr("data-src")?.takeIf { it.isNotBlank() }
+            ?: img?.attr("data-original")?.takeIf { it.isNotBlank() }
             ?: img?.attr("src")
 
-        val title = linkElement.attr("title")
-            .ifEmpty { this.selectFirst(".thumb_title, .title")?.text() } 
-            ?: linkElement.text() 
-            ?: return null
+        // Flexible title extraction (falls back to alt text or a default name)
+        val title = linkElement.attr("title").takeIf { it.isNotBlank() }
+            ?: this.selectFirst(".thumb_title, .title, span")?.text()?.takeIf { it.isNotBlank() }
+            ?: img?.attr("alt")?.takeIf { it.isNotBlank() }
+            ?: "Video"
 
         return newMovieSearchResponse(title, href, TvType.NSFW) {
             this.posterUrl = fixUrlNull(poster)
@@ -89,13 +92,13 @@ class Analsee : MainAPI() {
         
         val title = document.selectFirst("h1.title")?.text()?.trim() 
             ?: document.selectFirst("h1")?.text()?.trim()
-            ?: document.selectFirst("title")?.text()?.trim() ?: return null
+            ?: document.selectFirst("title")?.text()?.trim() ?: "Video"
         
         val poster = document.selectFirst("meta[property=og:image]")?.attr("content")
         val description = document.selectFirst("meta[property=og:description]")?.attr("content")
         val tags = document.select(".video-info .tags a, .tags a, .categories a").map { it.text() }
         
-        val recommendations = document.select("div.th, div.item, div.video-item, div.thumb-block").mapNotNull { it.toSearchResult() }
+        val recommendations = document.select("div.th").mapNotNull { it.toSearchResult() }
 
         return newMovieLoadResponse(title, url, TvType.NSFW, url) {
             this.posterUrl = poster
