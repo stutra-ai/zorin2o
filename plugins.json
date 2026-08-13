@@ -9,14 +9,14 @@
             "ByDune"
         ],
         "description": "Analsee",
-        "fileSize": 11490,
+        "fileSize": 11550,
         "repositoryUrl": "https://github.com/stutra-ai/zorin2o",
         "language": "en",
         "tvTypes": [
             "NSFW"
         ],
         "apiVersion": 1,
-        "fileHash": "sha256-a36660f01504ffbe1e64f2ad41af3ca35969f1fbde0e51f1a454bde52483f908"
+        "fileHash": "sha256-44d459c7bc4c4c9a273d12fdbc9ab9e7faa891e9f56d170794fd48807abb10e8"
     },
     {
         "url": "https://raw.githubusercontent.com/stutra-ai/zorin2o/builds/IndiaSocialBook.cs3",
