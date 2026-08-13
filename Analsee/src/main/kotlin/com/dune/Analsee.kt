@@ -79,7 +79,7 @@ class Analsee : MainAPI() {
         return newSearchResponseList(results, hasNext = hasNext)
     }
 
-    override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query).results
+    override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query, 1)
 
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url, headers = mainHeaders).document
@@ -108,7 +108,6 @@ class Analsee : MainAPI() {
     ): Boolean {
         val document = app.get(data, headers = mainHeaders).document
 
-        // Direct source harvesting from standard video tags or embedded source strings on Analsee
         val videoSource = document.selectFirst("video source")?.attr("src")
             ?: document.selectFirst("div#player video")?.attr("src")
             ?: Regex("url\\s*:\\s*['\"](https?://[^'\"]+\\.m3u8[^'\"]*)['\"]").find(document.toString())?.groupValues?.get(1)
