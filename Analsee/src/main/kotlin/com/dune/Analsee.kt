@@ -21,9 +21,16 @@ class Analsee : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = if (page <= 1) request.data else "${request.data.replace("?", "/$page/?")}"
+        val url = if (page <= 1) {
+            request.data
+        } else {
+            if (request.data.contains("?")) {
+                "${request.data}&page=$page"
+            } else {
+                "${request.data.removeSuffix("/")}/$page/"
+            }
+        }
         val document = app.get(url).document
-        // Target specifically the "div.th" elements identified in the source
         val home = document.select("div.th").mapNotNull { it.toSearchResult() }
         return newHomePageResponse(HomePageList(request.name, home, true), true)
     }
@@ -39,7 +46,6 @@ class Analsee : MainAPI() {
         val linkElement = this.selectFirst("a.thumb") ?: return null
         val href = fixUrl(linkElement.attr("href"))
         
-        // Handle lazy-loaded images (common in this CMS)
         val img = this.selectFirst("img")
         val poster = img?.attr("data-src")?.ifEmpty { null } 
             ?: img?.attr("src")
@@ -60,9 +66,8 @@ class Analsee : MainAPI() {
         
         val poster = document.selectFirst("meta[property=og:image]")?.attr("content")
         val description = document.selectFirst("meta[property=og:description]")?.attr("content")
-        val tags = document.select(".video-info .tags a").map { it.text() }
+        val tags = document.select(".video-info .tags a, .tags a").map { it.text() }
         
-        // Recommendations use the same grid structure as the homepage
         val recommendations = document.select("div.th").mapNotNull { it.toSearchResult() }
 
         return newMovieLoadResponse(title, url, TvType.NSFW, url) {
@@ -79,25 +84,25 @@ class Analsee : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // Use headers to avoid 403 blocks
         val document = app.get(data, headers = mapOf("Referer" to "$mainUrl/")).document
         val scriptContent = document.select("script").html()
         
         var found = false
-        // Regex looks for URLs in quotes ending in .mp4 or .m3u8 within the JS
         val regex = """['"](https?://[^"']+\.(?:mp4|m3u8)[^"']*)['"]""".toRegex()
         
         regex.findAll(scriptContent).forEach { match ->
-            val url = match.groupValues[1].replace("\\/", "/")
-            if (!url.contains("ads", ignoreCase = true) && !url.contains("track")) {
+            val videoUrl = match.groupValues[1].replace("\\/", "/")
+            if (!videoUrl.contains("ads", ignoreCase = true) && !videoUrl.contains("track")) {
                 callback.invoke(
                     newExtractorLink(
-                        name,
-                        name,
-                        url,
-                        referer = "$mainUrl/",
-                        type = if (url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                    )
+                        name = name,
+                        source = name,
+                        url = videoUrl,
+                        type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                    ) {
+                        this.referer = mainUrl
+                        this.quality = Qualities.Unknown.value
+                    }
                 )
                 found = true
             }
