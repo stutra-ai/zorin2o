@@ -21,17 +21,9 @@ class Analsee : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = if (page <= 1) {
-            request.data
-        } else {
-            if (request.data.contains("?")) {
-                "${request.data}&page=$page"
-            } else {
-                "${request.data.removeSuffix("/")}/$page/"
-            }
-        }
-        
+        val url = if (page <= 1) request.data else "${request.data.replace("?", "/$page/?")}"
         val document = app.get(url).document
+        // Target specifically the "div.th" elements identified in the source
         val home = document.select("div.th").mapNotNull { it.toSearchResult() }
         return newHomePageResponse(HomePageList(request.name, home, true), true)
     }
@@ -44,19 +36,18 @@ class Analsee : MainAPI() {
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        val titleElement = this.selectFirst("a.thumb") ?: return null
+        val linkElement = this.selectFirst("a.thumb") ?: return null
+        val href = fixUrl(linkElement.attr("href"))
+        
+        // Handle lazy-loaded images (common in this CMS)
         val img = this.selectFirst("img")
+        val poster = img?.attr("data-src")?.ifEmpty { null } 
+            ?: img?.attr("src")
 
-        val poster = fixUrlNull(
-            img?.attr("data-src")?.takeIf { it.isNotEmpty() && !it.startsWith("data:") }
-                ?: img?.attr("src")
-        )
-
-        val href = fixUrl(titleElement.attr("href"))
-        val title = titleElement.attr("title").ifEmpty { this.selectFirst("span.thumb_title")?.text()?.trim() } ?: return null
+        val title = linkElement.attr("title").ifEmpty { this.selectFirst(".thumb_title")?.text() } ?: return null
 
         return newMovieSearchResponse(title, href, TvType.NSFW) {
-            this.posterUrl = poster
+            this.posterUrl = fixUrlNull(poster)
         }
     }
 
@@ -64,42 +55,21 @@ class Analsee : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         val document = app.get(url).document
-        val title = document.selectFirst("h1")?.text()?.trim() ?: return null
+        val title = document.selectFirst("h1.title")?.text()?.trim() 
+            ?: document.selectFirst("title")?.text()?.trim() ?: return null
         
-        val poster = fixUrlNull(
-            document.selectFirst("meta[property=og:image]")?.attr("content")
-                ?: document.selectFirst("video")?.attr("poster")
-        )
+        val poster = document.selectFirst("meta[property=og:image]")?.attr("content")
+        val description = document.selectFirst("meta[property=og:description]")?.attr("content")
+        val tags = document.select(".video-info .tags a").map { it.text() }
         
-        val tags = document.select("div.tags a, .video-tags a, ul.tags li a, .categories a").map { it.text() }
-        val description = document.selectFirst("meta[property=og:description]")?.attr("content")?.trim()
-        val actors = document.select("div.models a, .cast a, span.model a, .pornstars a").map { Actor(it.text()) }
-        
-        val recommendations = document.select("div.th").mapNotNull { it.toRecommendationResult() }
+        // Recommendations use the same grid structure as the homepage
+        val recommendations = document.select("div.th").mapNotNull { it.toSearchResult() }
 
         return newMovieLoadResponse(title, url, TvType.NSFW, url) {
             this.posterUrl = poster
             this.plot = description
             this.tags = tags
             this.recommendations = recommendations
-            addActors(actors)
-        }
-    }
-
-    private fun Element.toRecommendationResult(): SearchResponse? {
-        val titleElement = this.selectFirst("a.thumb") ?: return null
-        val posterUrl = fixUrlNull(
-            this.selectFirst("img")?.attr("data-src") 
-                ?: this.selectFirst("img")?.attr("src")
-        )
-        val title = titleElement.attr("title").ifEmpty { this.selectFirst("span.thumb_title")?.text()?.trim() } ?: return null
-
-        return newMovieSearchResponse(
-            title,
-            fixUrl(titleElement.attr("href")),
-            TvType.NSFW
-        ) {
-            this.posterUrl = posterUrl
         }
     }
 
@@ -109,60 +79,30 @@ class Analsee : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val url = fixUrl(data)
-        var videoFound = false
-
-        try {
-            val document = app.get(url).document
-            val scriptContent = document.select("script").html()
-            
-            val sourceRegex = """"(https?://[^"]+\.(?:mp4|m3u8)[^"]*)"""".toRegex()
-            sourceRegex.findAll(scriptContent).forEach { match ->
-                val videoUrl = match.groupValues[1].replace("\\/", "/")
-                if (!videoUrl.contains("ads", ignoreCase = true)) {
-                    val quality = if (videoUrl.contains("1080p")) Qualities.P1080.value 
-                                  else if (videoUrl.contains("720p")) Qualities.P720.value 
-                                  else Qualities.Unknown.value
-
-                    callback.invoke(
-                        newExtractorLink(
-                            name = name,
-                            source = name,
-                            url = videoUrl,
-                            type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                        ) {
-                            this.referer = mainUrl
-                            this.quality = quality
-                        }
+        // Use headers to avoid 403 blocks
+        val document = app.get(data, headers = mapOf("Referer" to "$mainUrl/")).document
+        val scriptContent = document.select("script").html()
+        
+        var found = false
+        // Regex looks for URLs in quotes ending in .mp4 or .m3u8 within the JS
+        val regex = """['"](https?://[^"']+\.(?:mp4|m3u8)[^"']*)['"]""".toRegex()
+        
+        regex.findAll(scriptContent).forEach { match ->
+            val url = match.groupValues[1].replace("\\/", "/")
+            if (!url.contains("ads", ignoreCase = true) && !url.contains("track")) {
+                callback.invoke(
+                    newExtractorLink(
+                        name,
+                        name,
+                        url,
+                        referer = "$mainUrl/",
+                        type = if (url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                     )
-                    videoFound = true
-                }
+                )
+                found = true
             }
-
-            if (!videoFound) {
-                document.select("video source, source, iframe").forEach { element ->
-                    val src = element.attr("src")
-                    if (src.isNotEmpty()) {
-                        val fixedSrc = fixUrl(src)
-                        callback.invoke(
-                            newExtractorLink(
-                                name = name,
-                                source = name,
-                                url = fixedSrc,
-                                type = if (fixedSrc.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                            ) {
-                                this.referer = mainUrl
-                                this.quality = Qualities.Unknown.value
-                            }
-                        )
-                        videoFound = true
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.d(name, "Error loading links: ${e.message}")
         }
-
-        return videoFound
+        
+        return found
     }
 }
