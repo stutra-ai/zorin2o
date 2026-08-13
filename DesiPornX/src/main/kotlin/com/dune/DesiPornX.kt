@@ -1,8 +1,8 @@
-// DesiPornX.kt
 package com.dune
 
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
 import java.math.BigInteger
@@ -81,7 +81,7 @@ class DesiPornX : MainAPI() {
             this.tags = tags
             this.duration = duration
             this.recommendations = recommendations
-            addActors(actors)   // Extension function from Companion
+            addActors(actors)   // Now resolved correctly via the static import
         }
     }
 
@@ -148,7 +148,7 @@ class DesiPornX : MainAPI() {
                                 this.quality = getQualityFromName(quality)
                             }
                         )
-                        videolink = true
+                        videourl = true
                     }
                 }
             val hlsmatch = """"srcFallback"\s*:\s*"(https?://[^"]+\.m3u8[^"]*)"""".toRegex().find(responsetext)
