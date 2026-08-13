@@ -102,7 +102,7 @@ class DesiPornX : MainAPI() {
                         name = name,
                         source = name,
                         url = resolvedUrl,
-                        type = if (resolvedUrl.contains(".m3u8")) ExtractorLinkType.HLS else ExtractorLinkType.VIDEO
+                        type = ExtractorLinkType.VIDEO
                     ) {
                         this.referer = mainUrl
                         this.quality = Qualities.Unknown.value
@@ -123,7 +123,7 @@ class DesiPornX : MainAPI() {
                                 name = name,
                                 source = name,
                                 url = foundUrl,
-                                type = if (foundUrl.contains(".m3u8")) ExtractorLinkType.HLS else ExtractorLinkType.VIDEO
+                                type = ExtractorLinkType.VIDEO
                             ) {
                                 this.referer = mainUrl
                                 this.quality = Qualities.Unknown.value
