@@ -79,7 +79,12 @@ class Analsee : MainAPI() {
         return newSearchResponseList(results, hasNext = hasNext)
     }
 
-    override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query, 1)
+    override suspend fun quickSearch(query: String): List<SearchResponse>? {
+        val url = "$mainUrl/search/$query/1/"
+        val document = app.get(url, headers = mainHeaders).document
+        val items = document.select("div.item, article.post, div.video-item")
+        return items.mapNotNull { it.toSearchResponse() }
+    }
 
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url, headers = mainHeaders).document
