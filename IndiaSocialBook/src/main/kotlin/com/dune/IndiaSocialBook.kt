@@ -115,7 +115,6 @@ class IndiaSocialBook : MainAPI() {
                 }
             }.let { episodes.addAll(it) }
         } else {
-            // For single video pages, pass the main post url so loadLinks can parse the direct <source> / <video> tag
             episodes.add(
                 newEpisode(url) {
                     this.name = title
@@ -152,10 +151,10 @@ class IndiaSocialBook : MainAPI() {
     ): Boolean {
         var foundLinks = false
 
-        // 1. Target direct <source> and <video> tags within the element
-        element.select("video source, video, source").forEach { el ->
-            val src = el.attr("src")
-                .takeIf { !it.isNullOrBlank() && it != "about:blank" }
+        // 1. Target direct <video>, <source>, and elements containing video attributes
+        val videoElements = element.select("video, source, video source")
+        for (el in videoElements) {
+            val src = el.attr("src").takeIf { !it.isNullOrBlank() && it != "about:blank" }
                 ?: el.attr("data-src")
                 ?: el.attr("data-url")
                 ?: el.attr("data-file")
@@ -175,6 +174,29 @@ class IndiaSocialBook : MainAPI() {
                     }
                 )
                 foundLinks = true
+            }
+        }
+
+        // Also check parent elements or wrapper blocks that might contain video sources via attributes
+        element.select("[data-src], [data-url], [data-file]").forEach { el ->
+            listOf("data-src", "data-url", "data-file").forEach { attr ->
+                val src = el.attr(attr)
+                if (!src.isNullOrBlank() && (src.endsWith(".mp4") || src.contains(".m3u8")) && !src.startsWith("data:")) {
+                    val videoUrl = fixUrl(src)
+                    val type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                    callback.invoke(
+                        newExtractorLink(
+                            name = name,
+                            source = name,
+                            url = videoUrl,
+                            type = type
+                        ) {
+                            this.referer = currentReferer
+                            this.quality = Qualities.Unknown.value
+                        }
+                    )
+                    foundLinks = true
+                }
             }
         }
 
@@ -243,7 +265,6 @@ class IndiaSocialBook : MainAPI() {
             data.substringBefore("#")
         }
 
-        // Check if data is an external iframe/player link
         if (data.startsWith("http") && !data.contains("indiasocialbook.com/videos/")) {
             try {
                 if (loadExtractor(data, mainUrl, subtitleCallback, callback)) {
@@ -273,12 +294,12 @@ class IndiaSocialBook : MainAPI() {
             } catch (_: Exception) {}
         }
 
-        // Scrape the target article page
         if (!foundLinks) {
             try {
                 if (targetUrl.isNotBlank()) {
                     val response = app.get(targetUrl, headers = headers)
-                    val contentArea = response.document.selectFirst("div.entry-content, article.post") ?: response.document.body()
+                    // Fallback to full document body if specific content area doesn't capture the player block
+                    val contentArea = response.document.selectFirst("div.entry-content, article.post, div.wps-player-block") ?: response.document.body()
                     
                     if (data.contains("#tab_")) {
                         val tabIndex = data.substringAfter("#tab_").toIntOrNull() ?: 0
@@ -299,8 +320,10 @@ class IndiaSocialBook : MainAPI() {
                             }
                         }
                     } else {
-                        // For single video pages (or default entry), scan the scoped content area for <video> and <source> tags
+                        // Scan both the specific content area and the entire document body for single video sources
                         if (extractFromElement(contentArea, targetUrl, headers, subtitleCallback, callback)) {
+                            foundLinks = true
+                        } else if (extractFromElement(response.document.body(), targetUrl, headers, subtitleCallback, callback)) {
                             foundLinks = true
                         }
                     }
