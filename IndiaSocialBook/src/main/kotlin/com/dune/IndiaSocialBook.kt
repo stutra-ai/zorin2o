@@ -145,9 +145,9 @@ class IndiaSocialBook : MainAPI() {
                         source = name,
                         name = name,
                         url = videoUrl,
-                        referer = currentReferer,
                         type = type
                     ) {
+                        this.referer = currentReferer
                         this.quality = Qualities.Unknown.value
                     }
                 )
@@ -168,9 +168,9 @@ class IndiaSocialBook : MainAPI() {
                         source = name,
                         name = name,
                         url = videoUrl,
-                        referer = currentReferer,
                         type = type
                     ) {
+                        this.referer = currentReferer
                         this.quality = Qualities.Unknown.value
                     }
                 )
