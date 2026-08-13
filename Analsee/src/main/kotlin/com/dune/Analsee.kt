@@ -16,15 +16,23 @@ class Analsee : MainAPI() {
 
     override val mainPage = mainPageOf(
         "$mainUrl/" to "Most Recent",
-        "$mainUrl/most-popular/" to "Most Popular",
-        "$mainUrl/top-rated/" to "Top Rated",
-        "$mainUrl/longest/" to "Longest"
+        "$mainUrl/videos/?sort_by=video_viewed" to "Most Viewed",
+        "$mainUrl/videos/?sort_by=rating" to "Top Rated"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = if (page <= 1) request.data else "${request.data.removeSuffix("/")}/${page}/"
+        val url = if (page <= 1) {
+            request.data
+        } else {
+            if (request.data.contains("?")) {
+                "${request.data}&page=$page"
+            } else {
+                "${request.data.removeSuffix("/")}/$page/"
+            }
+        }
+        
         val document = app.get(url).document
-        val home = document.select("div.video-item, div.item, div.thumb-block, div.col").mapNotNull { it.toSearchResult() }
+        val home = document.select("div.th").mapNotNull { it.toSearchResult() }
         return newHomePageResponse(HomePageList(request.name, home, true), true)
     }
 
@@ -32,11 +40,11 @@ class Analsee : MainAPI() {
         val formattedQuery = query.replace(" ", "-")
         val url = "$mainUrl/search/$formattedQuery/"
         val document = app.get(url).document
-        return document.select("div.video-item, div.item, div.thumb-block, div.col").mapNotNull { it.toSearchResult() }
+        return document.select("div.th").mapNotNull { it.toSearchResult() }
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        val titleElement = this.selectFirst("a.title, p.title a, div.title a, h3 a") ?: this.selectFirst("a") ?: return null
+        val titleElement = this.selectFirst("a.thumb") ?: return null
         val img = this.selectFirst("img")
 
         val poster = fixUrlNull(
@@ -45,7 +53,7 @@ class Analsee : MainAPI() {
         )
 
         val href = fixUrl(titleElement.attr("href"))
-        val title = titleElement.text().trim()
+        val title = titleElement.attr("title").ifEmpty { this.selectFirst("span.thumb_title")?.text()?.trim() } ?: return null
 
         return newMovieSearchResponse(title, href, TvType.NSFW) {
             this.posterUrl = poster
@@ -67,7 +75,7 @@ class Analsee : MainAPI() {
         val description = document.selectFirst("meta[property=og:description]")?.attr("content")?.trim()
         val actors = document.select("div.models a, .cast a, span.model a, .pornstars a").map { Actor(it.text()) }
         
-        val recommendations = document.select("div.video-item, div.item, div.thumb-block, div.col").mapNotNull { it.toRecommendationResult() }
+        val recommendations = document.select("div.th").mapNotNull { it.toRecommendationResult() }
 
         return newMovieLoadResponse(title, url, TvType.NSFW, url) {
             this.posterUrl = poster
@@ -79,13 +87,15 @@ class Analsee : MainAPI() {
     }
 
     private fun Element.toRecommendationResult(): SearchResponse? {
-        val titleElement = this.selectFirst("a.title, p.title a, div.title a, h3 a") ?: this.selectFirst("a") ?: return null
+        val titleElement = this.selectFirst("a.thumb") ?: return null
         val posterUrl = fixUrlNull(
             this.selectFirst("img")?.attr("data-src") 
                 ?: this.selectFirst("img")?.attr("src")
         )
+        val title = titleElement.attr("title").ifEmpty { this.selectFirst("span.thumb_title")?.text()?.trim() } ?: return null
+
         return newMovieSearchResponse(
-            titleElement.text().trim(),
+            title,
             fixUrl(titleElement.attr("href")),
             TvType.NSFW
         ) {
