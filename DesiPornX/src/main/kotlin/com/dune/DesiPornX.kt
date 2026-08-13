@@ -2,7 +2,6 @@ package com.dune
 
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
 
@@ -88,20 +87,25 @@ class DesiPornX : MainAPI() {
         var videolink = false
 
         try {
-            val document = app.get(url).document
-            
-            // Check direct video sources, embeds, iframes, or source nodes
-            val sources = document.select("video source, video, iframe, source, embed")
-            for (srcEl in sources) {
-                val src = srcEl.attr("src").ifEmpty { srcEl.attr("data-src") }
+            val res = app.get(url)
+            val document = res.document
+            val fullHtml = res.text
+
+            Log.d(name, "Fetching video page: $url (Status: ${res.code})")
+
+            // 1. Check standard HTML tags: <video>, <source>, <iframe>, <embed>, <object>
+            val elements = document.select("video, source, iframe, embed, object")
+            for (el in elements) {
+                val src = el.attr("src").ifEmpty { el.attr("data-src") }.ifEmpty { el.attr("data-url") }
                 if (src.isNotEmpty()) {
-                    val resolvedUrl = fixUrl(src)
-                    if (!resolvedUrl.contains("ads") && !resolvedUrl.endsWith(".js")) {
+                    val resolved = fixUrl(src)
+                    if (!resolved.contains("ads") && !resolved.endsWith(".js") && !resolved.contains("banner")) {
+                        Log.d(name, "Found link via tag element: $resolved")
                         callback.invoke(
                             newExtractorLink(
                                 name = name,
                                 source = name,
-                                url = resolvedUrl,
+                                url = resolved,
                                 type = ExtractorLinkType.VIDEO
                             ) {
                                 this.referer = mainUrl
@@ -113,13 +117,33 @@ class DesiPornX : MainAPI() {
                 }
             }
 
-            // Deep scrape script bodies and inline player configurations for raw video streams (.mp4, .m3u8)
-            val fullHtml = document.html()
-            val urlRegex = """(https?://[^\s"'+\\]+?\.(?:mp4|m3u8|mov)[^\s"'+\\]*)""".toRegex()
-            
+            // 2. Comprehensive raw text/script scanning for file URLs or embedded player variables
+            val urlRegex = """(https?://[^\s"'+\\]+?\.(?:mp4|m3u8|mov|webm|ts)[^\s"'+\\]*)""".toRegex()
             urlRegex.findAll(fullHtml).forEach { match ->
                 val foundUrl = fixUrl(match.value)
                 if (!foundUrl.contains("ads") && !foundUrl.contains("banner") && !foundUrl.endsWith(".js")) {
+                    Log.d(name, "Found link via global regex: $foundUrl")
+                    callback.invoke(
+                        newExtractorLink(
+                            name = name,
+                            source = name,
+                            url = foundUrl,
+                            type = ExtractorLinkType.VIDEO
+                        ) {
+                            this.referer = mainUrl
+                            this.quality = Qualities.Unknown.value
+                        }
+                    )
+                    videolink = true
+                }
+            }
+
+            // 3. Fallback: Check if the site uses a specific custom embedded player or player variables in scripts
+            val jsVarRegex = """(?:file|src|url|video_url|play_url)\s*[:=]\s*["'](https?://[^"']+)["']""".toRegex()
+            jsVarRegex.findAll(fullHtml).forEach { match ->
+                val foundUrl = fixUrl(match.groupValues[1])
+                if (!foundUrl.contains("ads") && !foundUrl.endsWith(".js")) {
+                    Log.d(name, "Found link via JS variable pattern: $foundUrl")
                     callback.invoke(
                         newExtractorLink(
                             name = name,
