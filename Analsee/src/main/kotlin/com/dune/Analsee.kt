@@ -31,13 +31,19 @@ class Analsee : MainAPI() {
         val url = if (page == 1) {
             request.data
         } else {
-            // Adjust if pagination uses a different format on your target pages
-            "${request.data.removeSuffix("/")}/$page/"
+            if (request.data.endsWith("/")) {
+                "${request.data}$page/"
+            } else {
+                "${request.data}/$page/"
+            }
         }
 
-        val document = app.get(url, headers = mainHeaders).document
-        // Match the exact container class from your HTML snippet: div.th
-        val items = document.select("div.th")
+        val res = app.get(url, headers = mainHeaders)
+        val document = res.document
+        
+        // Comprehensive fallback selector to catch items across all layout types
+        val items = document.select("div.th, div.item, article, div.video-item")
+        Log.d("Analsee", "Found ${items.size} items for URL: $url")
 
         val home = items.mapNotNull { it.toSearchResponse() }
         val hasNext = home.isNotEmpty()
@@ -53,16 +59,18 @@ class Analsee : MainAPI() {
     }
 
     private fun Element.toSearchResponse(): SearchResponse? {
-        val linkElement = this.selectFirst("a.thumb") ?: return null
+        val linkElement = this.selectFirst("a.thumb, a") ?: return null
         val href = fixUrlNull(linkElement.attr("href")) ?: return null
 
-        val imgElement = this.selectFirst("span.thumb_img img")
+        val imgElement = this.selectFirst("img")
         
-        // Target the explicit thumb_title span for clean title extraction
-        val title = this.selectFirst("span.thumb_title")?.text()?.trim()
+        val title = this.selectFirst("span.thumb_title, .title, h3, h4")?.text()?.trim()
             ?: imgElement?.attr("alt")?.trim()?.ifBlank { null }
             ?: linkElement.attr("title").trim().ifBlank { null }
+            ?: linkElement.text().trim().ifBlank { null }
             ?: return null
+
+        if (title.contains("Categories", ignoreCase = true) || href.contains("/category/")) return null
 
         val posterUrl = fixUrlNull(
             imgElement?.attr("src") 
@@ -79,7 +87,7 @@ class Analsee : MainAPI() {
     override suspend fun search(query: String, page: Int): SearchResponseList {
         val url = "$mainUrl/search/$query/$page/"
         val document = app.get(url, headers = mainHeaders).document
-        val items = document.select("div.th")
+        val items = document.select("div.th, div.item, article, div.video-item")
 
         val results = items.mapNotNull { it.toSearchResponse() }
         val hasNext = results.isNotEmpty()
@@ -90,7 +98,7 @@ class Analsee : MainAPI() {
     override suspend fun quickSearch(query: String): List<SearchResponse>? {
         val url = "$mainUrl/search/$query/1/"
         val document = app.get(url, headers = mainHeaders).document
-        val items = document.select("div.th")
+        val items = document.select("div.th, div.item, article, div.video-item")
         return items.mapNotNull { it.toSearchResponse() }
     }
 
@@ -102,10 +110,10 @@ class Analsee : MainAPI() {
             document.selectFirst("video")?.attr("poster") 
                 ?: document.selectFirst("meta[property='og:image']")?.attr("content")
         )
-        val description = document.selectFirst("div.description, div.info")?.text()?.trim()
+        val description = document.selectFirst("div.description, div.info, .video-description")?.text()?.trim()
 
-        val tags = document.select("div.tags a, .video-tags a").mapNotNull { it.text().trim() }
-        val actors = document.select("div.models a, .cast a").mapNotNull { Actor(it.text()) }
+        val tags = document.select("div.tags a, .video-tags a, .tags-list a").mapNotNull { it.text().trim() }
+        val actors = document.select("div.models a, .cast a, .models-list a").mapNotNull { Actor(it.text()) }
 
         return newMovieLoadResponse(title, url, TvType.NSFW, url) {
             this.posterUrl = poster
@@ -122,11 +130,15 @@ class Analsee : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val document = app.get(data, headers = mainHeaders).document.toString()
+        val res = app.get(data, headers = mainHeaders)
+        val htmlContent = res.text
 
-        val videoSource = Regex("url\\s*:\\s*['\"](https?://[^'\"]+\\.m3u8[^'\"]*)['\"]").find(document)?.groupValues?.get(1)
-            ?: Regex("file\\s*:\\s*['\"](https?://[^'\"]+)['\"]").find(document)?.groupValues?.get(1)
-            ?: org.jsoup.Jsoup.parse(document).selectFirst("video source")?.attr("src")
+        // Extract direct video source URLs or streams embedded in script parameters/video tags
+        val videoSource = Regex("url\\s*:\\s*['\"](https?://[^'\"]+\\.m3u8[^'\"]*)['\"]").find(htmlContent)?.groupValues?.get(1)
+            ?: Regex("file\\s*:\\s*['\"](https?://[^'\"]+)['\"]").find(htmlContent)?.groupValues?.get(1)
+            ?: Regex("src\\s*:\\s*['\"](https?://[^'\"]+\\.mp4[^'\"]*)['\"]").find(htmlContent)?.groupValues?.get(1)
+            ?: org.jsoup.Jsoup.parse(htmlContent).selectFirst("video source")?.attr("src")
+            ?: org.jsoup.Jsoup.parse(htmlContent).selectFirst("video")?.attr("src")
 
         if (!videoSource.isNullOrBlank()) {
             val isM3u8 = videoSource.contains(".m3u8")
