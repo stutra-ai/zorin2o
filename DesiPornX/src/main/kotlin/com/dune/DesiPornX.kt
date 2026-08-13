@@ -90,39 +90,18 @@ class DesiPornX : MainAPI() {
         try {
             val document = app.get(url).document
             
-            // Extract video source from video tag or iframe or scripts
-            val videoSrc = document.selectFirst("video source")?.attr("src")
-                ?: document.selectFirst("video")?.attr("src")
-                ?: document.selectFirst("iframe")?.attr("src")
-
-            if (!videoSrc.isNullOrEmpty()) {
-                val resolvedUrl = fixUrl(videoSrc)
-                callback.invoke(
-                    newExtractorLink(
-                        name = name,
-                        source = name,
-                        url = resolvedUrl,
-                        type = ExtractorLinkType.VIDEO
-                    ) {
-                        this.referer = mainUrl
-                        this.quality = Qualities.Unknown.value
-                    }
-                )
-                videolink = true
-            }
-
-            // Fallback: search for mp4 or m3u8 sources within script tags
-            if (!videolink) {
-                val scriptTags = document.select("script").html()
-                val urlRegex = """(https?://[^\s"'+\\]+?\.(?:mp4|m3u8)[^\s"'+\\]*)""".toRegex()
-                urlRegex.findAll(scriptTags).forEach { match ->
-                    val foundUrl = match.value
-                    if (!foundUrl.contains("ads") && !foundUrl.contains("banner")) {
+            // Check direct video sources, embeds, iframes, or source nodes
+            val sources = document.select("video source, video, iframe, source, embed")
+            for (srcEl in sources) {
+                val src = srcEl.attr("src").ifEmpty { srcEl.attr("data-src") }
+                if (src.isNotEmpty()) {
+                    val resolvedUrl = fixUrl(src)
+                    if (!resolvedUrl.contains("ads") && !resolvedUrl.endsWith(".js")) {
                         callback.invoke(
                             newExtractorLink(
                                 name = name,
                                 source = name,
-                                url = foundUrl,
+                                url = resolvedUrl,
                                 type = ExtractorLinkType.VIDEO
                             ) {
                                 this.referer = mainUrl
@@ -133,6 +112,29 @@ class DesiPornX : MainAPI() {
                     }
                 }
             }
+
+            // Deep scrape script bodies and inline player configurations for raw video streams (.mp4, .m3u8)
+            val fullHtml = document.html()
+            val urlRegex = """(https?://[^\s"'+\\]+?\.(?:mp4|m3u8|mov)[^\s"'+\\]*)""".toRegex()
+            
+            urlRegex.findAll(fullHtml).forEach { match ->
+                val foundUrl = fixUrl(match.value)
+                if (!foundUrl.contains("ads") && !foundUrl.contains("banner") && !foundUrl.endsWith(".js")) {
+                    callback.invoke(
+                        newExtractorLink(
+                            name = name,
+                            source = name,
+                            url = foundUrl,
+                            type = ExtractorLinkType.VIDEO
+                        ) {
+                            this.referer = mainUrl
+                            this.quality = Qualities.Unknown.value
+                        }
+                    )
+                    videolink = true
+                }
+            }
+
         } catch (e: Exception) {
             Log.d(name, "Error loading links: ${e.message}")
         }
