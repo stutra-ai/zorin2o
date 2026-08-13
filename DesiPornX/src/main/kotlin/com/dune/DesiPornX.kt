@@ -25,7 +25,7 @@ class DesiPornX : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = if (page <= 1) request.data else "${request.data.removeSuffix("/")}/?p=$page"
+        val url = if (page <= 1) request.data else "${request.data.removeSuffix("/")}/new/?p=$page"
         val document = app.get(url).document
         
         val results = document.select("div.th").mapNotNull { it.toSearchResult() }
@@ -37,7 +37,7 @@ class DesiPornX : MainAPI() {
         val url = if (page <= 1) "$mainUrl/?s=$formattedQuery" else "$mainUrl/page/$page/?s=$formattedQuery"
         val document = app.get(url).document
         
-        val results = document.select("div.th, article.post, div.thumb-block").mapNotNull { it.toSearchResult() }
+        val results = document.select("div.th").mapNotNull { it.toSearchResult() }
         return newSearchResponseList(results, true)
     }
 
@@ -64,7 +64,7 @@ class DesiPornX : MainAPI() {
         val formattedQuery = query.replace(" ", "+")
         val url = "$mainUrl/?s=$formattedQuery"
         val document = app.get(url).document
-        return document.select("div.th, article.post, div.thumb-block").mapNotNull { it.toSearchResult() }
+        return document.select("div.th").mapNotNull { it.toSearchResult() }
     }
 
     override suspend fun load(url: String): LoadResponse? {
@@ -76,7 +76,7 @@ class DesiPornX : MainAPI() {
         
         val tags = document.select("span.tags-links a, .tagcloud a").map { it.text() }
         val actors = document.select("span.actor-links a, .template-actors a").map { Actor(it.text()) }
-        val recommendations = document.select("div.th, article.post, div.thumb-block").mapNotNull { it.toSearchResult() }
+        val recommendations = document.select("div.th").mapNotNull { it.toSearchResult() }
 
         val contentArea = document.selectFirst("div.entry-content, article.post, div.video-player") ?: document
         val tabNavs = contentArea.select("ul.tab-nav li")
