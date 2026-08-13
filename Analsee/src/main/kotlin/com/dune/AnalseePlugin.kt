@@ -1,11 +1,10 @@
 package com.dune
 
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
-import com.lagradost.cloudstream3.plugins.Plugin
-import android.content.Context
+import com.lagradost.cloudstream3.plugins.BasePlugin
 
 @CloudstreamPlugin
-class AnalseePlugin: Plugin() {
+class AnalseePlugin: BasePlugin() {
     override fun load() {
         registerMainAPI(Analsee())
     }
