@@ -28,13 +28,13 @@
             "ByDune"
         ],
         "description": "ISB Videos",
-        "fileSize": 26978,
+        "fileSize": 19642,
         "repositoryUrl": "https://github.com/stutra-ai/zorin2o",
         "language": "en",
         "tvTypes": [
             "NSFW"
         ],
         "apiVersion": 1,
-        "fileHash": "sha256-181362aa4140768a6ef88a31b6f3fe1240e4c412e391ea3641bc26663b54e39a"
+        "fileHash": "sha256-ed149e2365a0a5e21a29b30ad7934efc256f3684bf928ee760971cc0f0027245"
     }
 ]
