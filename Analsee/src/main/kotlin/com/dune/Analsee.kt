@@ -28,12 +28,11 @@ class Analsee : MainAPI() {
         return newHomePageResponse(HomePageList(request.name, home, true), true)
     }
 
-    override suspend fun search(query: String, page: Int): SearchResponseList {
+    override suspend fun search(query: String): List<SearchResponse> {
         val formattedQuery = query.replace(" ", "-")
-        val url = if (page <= 1) "$mainUrl/search/$formattedQuery/" else "$mainUrl/search/$formattedQuery/$page/"
+        val url = "$mainUrl/search/$formattedQuery/"
         val document = app.get(url).document
-        val results = document.select("div.video-item, div.item, div.thumb-block, div.col").mapNotNull { it.toSearchResult() }
-        return newSearchResponseList(results, true)
+        return document.select("div.video-item, div.item, div.thumb-block, div.col").mapNotNull { it.toSearchResult() }
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
@@ -53,12 +52,7 @@ class Analsee : MainAPI() {
         }
     }
 
-    override suspend fun quickSearch(query: String): List<SearchResponse>? {
-        val formattedQuery = query.replace(" ", "-")
-        val url = "$mainUrl/search/$formattedQuery/"
-        val document = app.get(url).document
-        return document.select("div.video-item, div.item, div.thumb-block, div.col").mapNotNull { it.toSearchResult() }
-    }
+    override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query)
 
     override suspend fun load(url: String): LoadResponse? {
         val document = app.get(url).document
