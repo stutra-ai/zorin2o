@@ -1,11 +1,11 @@
-// desipornx.kt
+// DesiPornX.kt
 package com.dune
 
 import com.lagradost.api.Log
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
+import java.math.BigInteger
 
 class DesiPornX : MainAPI() {
     override var mainUrl = "https://desipornx.org"
@@ -55,7 +55,7 @@ class DesiPornX : MainAPI() {
         }
     }
 
-    override suspend fun quickSearch(query: String): List? = search(query)
+    override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query)
 
     override suspend fun load(url: String): LoadResponse? {
         val document = app.get(url).document
