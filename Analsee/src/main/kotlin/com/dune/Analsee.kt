@@ -22,23 +22,17 @@ class Analsee : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // Handled dynamically: checks if pagination requires page parameters or query suffixes
         val url = if (page <= 1) request.data else "${request.data.removeSuffix("/")}/${page}/"
-        
         val document = app.get(url).document
-        // Fallback selectors for dynamic container elements
         val home = document.select("div.video-item, div.item, div.thumb-block, div.col").mapNotNull { it.toSearchResult() }
-        
         return newHomePageResponse(HomePageList(request.name, home, true), true)
     }
 
     override suspend fun search(query: String, page: Int): SearchResponseList {
         val formattedQuery = query.replace(" ", "-")
         val url = if (page <= 1) "$mainUrl/search/$formattedQuery/" else "$mainUrl/search/$formattedQuery/$page/"
-        
         val document = app.get(url).document
         val results = document.select("div.video-item, div.item, div.thumb-block, div.col").mapNotNull { it.toSearchResult() }
-        
         return newSearchResponseList(results, true)
     }
 
@@ -59,7 +53,12 @@ class Analsee : MainAPI() {
         }
     }
 
-    override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query).results
+    override suspend fun quickSearch(query: String): List<SearchResponse>? {
+        val formattedQuery = query.replace(" ", "-")
+        val url = "$mainUrl/search/$formattedQuery/"
+        val document = app.get(url).document
+        return document.select("div.video-item, div.item, div.thumb-block, div.col").mapNotNull { it.toSearchResult() }
+    }
 
     override suspend fun load(url: String): LoadResponse? {
         val document = app.get(url).document
@@ -111,11 +110,8 @@ class Analsee : MainAPI() {
 
         try {
             val document = app.get(url).document
-
-            // Dynamic script parsing for embedded video configurations or JSON configuration objects
             val scriptContent = document.select("script").html()
             
-            // Regex to find dynamic file sources (mp4/m3u8) hidden inside scripts or player configuration variables
             val sourceRegex = """"(https?://[^"]+\.(?:mp4|m3u8)[^"]*)"""".toRegex()
             sourceRegex.findAll(scriptContent).forEach { match ->
                 val videoUrl = match.groupValues[1].replace("\\/", "/")
@@ -139,7 +135,6 @@ class Analsee : MainAPI() {
                 }
             }
 
-            // Fallback: Check standard HTML5 video elements dynamically injected into the DOM
             if (!videoFound) {
                 document.select("video source, source, iframe").forEach { element ->
                     val src = element.attr("src")
