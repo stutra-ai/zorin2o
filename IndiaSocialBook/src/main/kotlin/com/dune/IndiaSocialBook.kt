@@ -7,7 +7,7 @@ import android.util.Log
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 
 class IndiaSocialBook : MainAPI() {
-    override var mainUrl = "https://indiasocialbook.com/videos"
+    override var mainUrl = "https://indiasocialbook.com"
     override var name = "IndiaSocialBook"
     override val hasMainPage = true
     override var lang = "en"
@@ -34,10 +34,8 @@ class IndiaSocialBook : MainAPI() {
             "${request.data}/page/$page"
         }
 
-        Log.d("Cloudstream", "MainPage URL: $url")
-
         val document = fetchWithAntiBot(url)
-        val items = document.select("div.video-item, article, div.card")
+        val items = document.select("div.video-item, article, div.card, div.thumb-block")
 
         val home = items.mapNotNull { it.toSearchResponse() }
         val hasNext = home.isNotEmpty()
@@ -72,13 +70,14 @@ class IndiaSocialBook : MainAPI() {
     }
 
     private fun Element.toSearchResponse(): SearchResponse? {
-        val linkElement = this.selectFirst("a")
-        val href = fixUrlNull(linkElement?.attr("href")) ?: return null
+        val linkElement = this.selectFirst("a") ?: return null
+        val href = fixUrlNull(linkElement.attr("href")) ?: return null
 
         val imgElement = this.selectFirst("img")
         val title = imgElement?.attr("alt")?.trim()?.ifBlank { null }
-            ?: linkElement?.attr("title")?.trim()?.ifBlank { null }
-            ?: linkElement?.text()?.trim()?.ifBlank { null }
+            ?: linkElement.attr("title").trim().ifBlank { null }
+            ?: linkElement.text().trim().ifBlank { null }
+            ?: this.selectFirst("h2, h3")?.text()?.trim()
             ?: return null
 
         val posterUrl = fixUrlNull(imgElement?.attr("src") ?: imgElement?.attr("data-src"))
@@ -92,7 +91,7 @@ class IndiaSocialBook : MainAPI() {
     override suspend fun search(query: String, page: Int): SearchResponseList {
         val url = "$mainUrl/videos/search?q=$query&page=$page"
         val document = fetchWithAntiBot(url)
-        val items = document.select("div.video-item, article, div.card")
+        val items = document.select("div.video-item, article, div.card, div.thumb-block")
 
         val results = items.mapNotNull { it.toSearchResponse() }
         val hasNext = results.isNotEmpty()
@@ -103,7 +102,7 @@ class IndiaSocialBook : MainAPI() {
     override suspend fun quickSearch(query: String): List<SearchResponse>? {
         val url = "$mainUrl/videos/search?q=$query&page=1"
         val document = fetchWithAntiBot(url)
-        val items = document.select("div.video-item, article, div.card")
+        val items = document.select("div.video-item, article, div.card, div.thumb-block")
         return items.mapNotNull { it.toSearchResponse() }
     }
 
@@ -114,32 +113,82 @@ class IndiaSocialBook : MainAPI() {
         val poster = fixUrlNull(document.selectFirst("meta[property='og:image']")?.attr("content"))
         val description = document.selectFirst("div.video-description, .description")?.text()?.trim()
 
-        val tags = document.select("div.tags a, .video-tags a").mapNotNull { it.text().trim() }
-        val actors = document.select("div.actors a, .cast a").mapNotNull { Actor(it.text()) }
+        val tags = document.select("div.tags a, .video-tags a, span.tags-links a").mapNotNull { it.text().trim() }
+        val actors = document.select("div.actors a, .cast a, span.actor-links a").mapNotNull { Actor(it.text()) }
 
-        val recommendations = document.select("div.related-video, div.card").mapNotNull { it.toRecommendationResult() }
+        val recommendations = document.select(
+            "div.related-video div.thumb-block, div.related-videos article, " +
+            "div.related-posts article, div.card, div.thumb-block, article.post"
+        ).mapNotNull { it.toRecommendationResult() }.distinctBy { it.url }
 
-        return newMovieLoadResponse(title, url, TvType.NSFW, url) {
-            this.posterUrl = poster
-            this.posterHeaders = mainHeaders
-            this.plot = description
-            this.tags = tags
-            this.recommendations = recommendations
-            addActors(actors)
+        // Multi-part detection (Tabs, buttons, or multiple iframes)
+        val contentArea = document.selectFirst("div.entry-content, article.post, div.video-player, div.player-container") ?: document
+        val tabNavs = contentArea.select("ul.tab-nav li, div.player-tabs button, .video-parts a, ul.nav-tabs li")
+        
+        val validIframes = contentArea.select("iframe, embed").filter {
+            val src = it.attr("src")
+            !src.isBlank() && src != "about:blank" && !src.contains("googlesyndication")
+        }
+
+        val episodes = mutableListOf<Episode>()
+
+        if (tabNavs.isNotEmpty()) {
+            tabNavs.mapIndexed { index, el ->
+                val tabName = el.text().trim().ifEmpty { "Part ${index + 1}" }
+                val targetTabId = el.attr("data-tab") ?: el.attr("data-target")
+                
+                val iframeSrc = if (!targetTabId.isNullOrBlank()) {
+                    contentArea.selectFirst("div.tab-content div#$targetTabId iframe, div#$targetTabId iframe, div$targetTabId iframe")?.attr("src")
+                } else null
+                
+                val resolvedIframe = iframeSrc ?: contentArea.select("div.tab-pane iframe, div.panel iframe, iframe").getOrNull(index)?.attr("src")
+                val episodeData = if (!resolvedIframe.isNullOrBlank()) fixUrl(resolvedIframe) else "$url#tab_$index"
+
+                newEpisode(episodeData) {
+                    this.name = tabName
+                    this.episode = index + 1
+                }
+            }.let { episodes.addAll(it) }
+        } else if (validIframes.size > 1) {
+            validIframes.mapIndexed { index, iframe ->
+                val iframeSrc = iframe.attr("src")
+                val episodeData = if (iframeSrc.isNotBlank()) fixUrl(iframeSrc) else "$url#iframe_$index"
+                newEpisode(episodeData) {
+                    this.name = "Part ${index + 1}"
+                    this.episode = index + 1
+                }
+            }.let { episodes.addAll(it) }
+        } else {
+            // Single video page
+            episodes.add(newEpisode(url) { 
+                this.name = title
+                this.episode = 1 
+            })
+        }
+
+        return if (episodes.size > 1) {
+            newTvSeriesLoadResponse(title, url, TvType.NSFW, episodes) {
+                this.posterUrl = poster
+                this.posterHeaders = mainHeaders
+                this.plot = description
+                this.tags = tags
+                this.recommendations = recommendations
+                addActors(actors)
+            }
+        } else {
+            newMovieLoadResponse(title, url, TvType.NSFW, episodes.firstOrNull()?.data ?: url) {
+                this.posterUrl = poster
+                this.posterHeaders = mainHeaders
+                this.plot = description
+                this.tags = tags
+                this.recommendations = recommendations
+                addActors(actors)
+            }
         }
     }
 
     private fun Element.toRecommendationResult(): SearchResponse? {
-        val title = this.selectFirst("a")?.attr("title")?.trim() 
-            ?: this.selectFirst("img")?.attr("alt")?.trim()
-            ?: return null
-        val href = fixUrlNull(this.selectFirst("a")?.attr("href")) ?: return null
-        val posterUrl = fixUrlNull(this.selectFirst("img")?.attr("src") ?: this.selectFirst("img")?.attr("data-src"))
-
-        return newMovieSearchResponse(title, href, TvType.NSFW) {
-            this.posterUrl = posterUrl
-            this.posterHeaders = mainHeaders
-        }
+        return this.toSearchResponse()
     }
 
     override suspend fun loadLinks(
@@ -148,10 +197,26 @@ class IndiaSocialBook : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val document = fetchWithAntiBot(data)
+        // If data points to an iframe or part tab link, fetch that specific target route
+        val targetUrl = data.substringBefore("#")
+        val document = fetchWithAntiBot(targetUrl)
+
+        // If data is a direct iframe link from a tab
+        var searchHtml = document.html()
+        if (data.contains("#tab_") || data.contains("#iframe_")) {
+            val index = data.substringAfter("_").toIntOrNull() ?: 0
+            val iframes = document.select("iframe")
+            if (index < iframes.size) {
+                val iframeSrc = iframes[index].attr("src")
+                if (iframeSrc.isNotBlank()) {
+                    val frameRes = app.get(fixUrl(iframeSrc), headers = mainHeaders)
+                    searchHtml += " " + frameRes.text
+                }
+            }
+        }
 
         val streamUrlRegex = Regex("[\"'](https?://[^\"']+\\.(m3u8|mp4)[^\"']*)[\"']")
-        val matches = streamUrlRegex.findAll(document.html())
+        val matches = streamUrlRegex.findAll(searchHtml)
 
         var foundLinks = false
         for (match in matches) {
@@ -169,13 +234,14 @@ class IndiaSocialBook : MainAPI() {
                     type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                 ) {
                     this.referer = "$mainUrl/"
+                    this.headers = mainHeaders
                 }
             )
         }
 
         if (!foundLinks) {
             val sourceApiRegex = Regex("source_url\\s*[:=]\\s*['\"]([^'\"]+)['\"]")
-            val apiMatch = sourceApiRegex.find(document.html())?.groupValues?.get(1)
+            val apiMatch = sourceApiRegex.find(searchHtml)?.groupValues?.get(1)
             if (!apiMatch.isNullOrBlank()) {
                 callback.invoke(
                     newExtractorLink(
@@ -185,6 +251,7 @@ class IndiaSocialBook : MainAPI() {
                         type = ExtractorLinkType.M3U8
                     ) {
                         this.referer = "$mainUrl/"
+                        this.headers = mainHeaders
                     }
                 )
                 foundLinks = true
