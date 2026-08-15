@@ -1,12 +1,10 @@
 package com.dune
 
-import android.util.Base64
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
 import android.util.Log
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
-import java.net.URLDecoder
 
 class IndiaSocialBook : MainAPI() {
     override var mainUrl = "https://indiasocialbook.com"
@@ -162,65 +160,6 @@ class IndiaSocialBook : MainAPI() {
         return this.toSearchResponse()
     }
 
-    private suspend fun extractVideosFromHtml(htmlContent: String, refererUrl: String, callback: (ExtractorLink) -> Unit): Boolean {
-        var found = false
-        val targets = mutableListOf(htmlContent)
-
-        val qParamRegex = "[?&]q=([^&\"'\\s]+)".toRegex(RegexOption.IGNORE_CASE)
-        qParamRegex.findAll(htmlContent).forEach { match ->
-            try {
-                var rawParam = match.groupValues[1]
-                var previous: String
-                do {
-                    previous = rawParam
-                    rawParam = URLDecoder.decode(rawParam, "UTF-8")
-                } while (rawParam != previous)
-
-                val cleanBase64 = rawParam.replace(Regex("[^A-Za-z0-9+/=]"), "")
-                val paddedBase64 = cleanBase64.padEnd((cleanBase64.length + 3) / 4 * 4, '=')
-
-                val decodedBytes = Base64.decode(paddedBase64, Base64.DEFAULT)
-                val decodedString = String(decodedBytes, Charsets.UTF_8)
-                
-                var unescapedHtml = decodedString
-                do {
-                    previous = unescapedHtml
-                    unescapedHtml = URLDecoder.decode(unescapedHtml, "UTF-8")
-                } while (unescapedHtml != previous)
-
-                targets.add(decodedString)
-                targets.add(unescapedHtml)
-            } catch (_: Exception) {}
-        }
-
-        val streamUrlRegex = Regex("[\"'](https?://[^\"']+\\.(m3u8|mp4|ts)[^\"']*)[\"']")
-        for (target in targets) {
-            streamUrlRegex.findAll(target).forEach { match ->
-                var videoUrl = match.groupValues[1]
-                if (videoUrl.startsWith("src=")) {
-                    videoUrl = videoUrl.substringAfter("src=").trim('"', '\'')
-                }
-
-                if (!videoUrl.contains("ads") && !videoUrl.contains("track") && !videoUrl.contains("googlesyndication")) {
-                    found = true
-                    val isM3u8 = videoUrl.contains(".m3u8")
-                    callback.invoke(
-                        newExtractorLink(
-                            source = name,
-                            name = name,
-                            url = fixUrl(videoUrl),
-                            type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                        ) {
-                            this.referer = refererUrl
-                            this.headers = mainHeaders
-                        }
-                    )
-                }
-            }
-        }
-        return found
-    }
-
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -231,33 +170,21 @@ class IndiaSocialBook : MainAPI() {
         var foundLinks = false
 
         try {
-            val responseText = if (targetUrl.contains("player-x.php")) {
-                app.get(targetUrl, headers = mainHeaders).text
-            } else {
-                fetchWithAntiBot(targetUrl).html()
+            // Use Cloudstream's built-in WebView interceptor to load the page and capture generated stream URLs
+            val interceptorUrl = if (targetUrl.contains("player-x.php")) targetUrl else {
+                val doc = fetchWithAntiBot(targetUrl)
+                doc.selectFirst("iframe")?.attr("src") ?: targetUrl
             }
 
-            if (extractVideosFromHtml(responseText, targetUrl, callback)) {
-                foundLinks = true
-            }
-
-            val document = fetchWithAntiBot(targetUrl)
-            document.select("iframe").forEach { iframe ->
-                val iframeSrc = fixUrl(iframe.attr("src"))
-                if (iframeSrc.isNotBlank() && iframeSrc.startsWith("http") && !iframeSrc.contains("googlesyndication")) {
-                    if (extractVideosFromHtml(iframeSrc, targetUrl, callback)) {
-                        foundLinks = true
-                    }
-                    try {
-                        val iframeText = app.get(iframeSrc, headers = mapOf("Referer" to targetUrl) + mainHeaders).text
-                        if (extractVideosFromHtml(iframeText, iframeSrc, callback)) {
-                            foundLinks = true
-                        }
-                    } catch (_: Exception) {}
+            // Safely evaluate via WebView request interceptor
+            loadExtractor(fixUrl(interceptorUrl), targetUrl, subtitleCallback) { link ->
+                if (!link.url.contains("ads") && !link.url.contains("googlesyndication")) {
+                    callback.invoke(link)
+                    foundLinks = true
                 }
             }
         } catch (e: Exception) {
-            Log.d("Cloudstream", "Error loading links: ${e.message}")
+            Log.d("Cloudstream", "Error loading links via WebView: ${e.message}")
         }
 
         return foundLinks
