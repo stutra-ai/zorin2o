@@ -231,29 +231,17 @@ class IndiaSocialBook : MainAPI() {
         var foundLinks = false
 
         try {
-            // Direct evaluation of target URL content
-            val document = if (targetUrl.contains("player-x.php")) {
-                app.get(targetUrl, headers = mainHeaders)
+            val responseText = if (targetUrl.contains("player-x.php")) {
+                app.get(targetUrl, headers = mainHeaders).text
             } else {
-                fetchWithAntiBot(targetUrl)
+                fetchWithAntiBot(targetUrl).html()
             }
 
-            if (extractVideosFromHtml(document.text, targetUrl, callback)) {
+            if (extractVideosFromHtml(responseText, targetUrl, callback)) {
                 foundLinks = true
             }
 
-            // Fallback: intercept via standard WebView helper if direct GET fails
-            if (!foundLinks) {
-                val interceptedLinks = loadExtractor(targetUrl)
-                if (!interceptedLinks.isNullOrEmpty()) {
-                    interceptedLinks.forEach { link ->
-                        callback.invoke(link)
-                        foundLinks = true
-                    }
-                }
-            }
-
-            // Iterate through any remaining page iframes
+            val document = fetchWithAntiBot(targetUrl)
             document.select("iframe").forEach { iframe ->
                 val iframeSrc = fixUrl(iframe.attr("src"))
                 if (iframeSrc.isNotBlank() && iframeSrc.startsWith("http") && !iframeSrc.contains("googlesyndication")) {
@@ -261,8 +249,8 @@ class IndiaSocialBook : MainAPI() {
                         foundLinks = true
                     }
                     try {
-                        val iframeDoc = app.get(iframeSrc, headers = mapOf("Referer" to targetUrl) + mainHeaders)
-                        if (extractVideosFromHtml(iframeDoc.text, iframeSrc, callback)) {
+                        val iframeText = app.get(iframeSrc, headers = mapOf("Referer" to targetUrl) + mainHeaders).text
+                        if (extractVideosFromHtml(iframeText, iframeSrc, callback)) {
                             foundLinks = true
                         }
                     } catch (_: Exception) {}
