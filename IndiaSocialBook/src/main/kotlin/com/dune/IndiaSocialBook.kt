@@ -1,10 +1,12 @@
 package com.dune
 
+import android.util.Base64
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
 import android.util.Log
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
+import java.net.URLDecoder
 
 class IndiaSocialBook : MainAPI() {
     override var mainUrl = "https://indiasocialbook.com"
@@ -28,12 +30,7 @@ class IndiaSocialBook : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = if (page == 1) {
-            request.data
-        } else {
-            "${request.data}/page/$page"
-        }
-
+        val url = if (page == 1) request.data else "${request.data}/page/$page"
         val document = fetchWithAntiBot(url)
         val items = document.select("div.video-item, article, div.card, div.thumb-block")
 
@@ -41,18 +38,13 @@ class IndiaSocialBook : MainAPI() {
         val hasNext = home.isNotEmpty()
 
         return newHomePageResponse(
-            list = HomePageList(
-                name = request.name,
-                list = home,
-                isHorizontalImages = true
-            ),
+            list = HomePageList(name = request.name, list = home, isHorizontalImages = true),
             hasNext = hasNext
         )
     }
 
     private suspend fun fetchWithAntiBot(url: String): org.jsoup.nodes.Document {
         var res = app.get(url, headers = mainHeaders)
-        
         if (res.code == 403 || res.code == 503 || res.text.contains("captcha", ignoreCase = true)) {
             Log.d("Cloudstream", "Anti-bot/Captcha triggered on $url. Attempting to acquire token...")
             try {
@@ -92,18 +84,14 @@ class IndiaSocialBook : MainAPI() {
         val url = "$mainUrl/videos/search?q=$query&page=$page"
         val document = fetchWithAntiBot(url)
         val items = document.select("div.video-item, article, div.card, div.thumb-block")
-
         val results = items.mapNotNull { it.toSearchResponse() }
-        val hasNext = results.isNotEmpty()
-
-        return newSearchResponseList(results, hasNext = hasNext)
+        return newSearchResponseList(results, hasNext = results.isNotEmpty())
     }
 
     override suspend fun quickSearch(query: String): List<SearchResponse>? {
         val url = "$mainUrl/videos/search?q=$query&page=1"
         val document = fetchWithAntiBot(url)
-        val items = document.select("div.video-item, article, div.card, div.thumb-block")
-        return items.mapNotNull { it.toSearchResponse() }
+        return document.select("div.video-item, article, div.card, div.thumb-block").mapNotNull { it.toSearchResponse() }
     }
 
     override suspend fun load(url: String): LoadResponse {
@@ -121,27 +109,22 @@ class IndiaSocialBook : MainAPI() {
             "div.related-posts article, div.card, div.thumb-block, article.post"
         ).mapNotNull { it.toRecommendationResult() }.distinctBy { it.url }
 
-        // Multi-part detection (Tabs, buttons, or multiple iframes)
-        val contentArea = document.selectFirst("div.entry-content, article.post, div.video-player, div.player-container") ?: document
-        val tabNavs = contentArea.select("ul.tab-nav li, div.player-tabs button, .video-parts a, ul.nav-tabs li")
+        val contentArea = document.selectFirst("div.video-player, div.entry-content, article.post") ?: document
+        val tabNavs = contentArea.select("ul.tab-nav li")
         
-        val validIframes = contentArea.select("iframe, embed").filter {
-            val src = it.attr("src")
-            !src.isBlank() && src != "about:blank" && !src.contains("googlesyndication")
-        }
-
         val episodes = mutableListOf<Episode>()
 
         if (tabNavs.isNotEmpty()) {
             tabNavs.mapIndexed { index, el ->
                 val tabName = el.text().trim().ifEmpty { "Part ${index + 1}" }
-                val targetTabId = el.attr("data-tab") ?: el.attr("data-target")
+                val targetTabId = el.attr("data-tab")
                 
+                // Directly locate the iframe inside the corresponding tab-pane (e.g., #tab0, #tab1)
                 val iframeSrc = if (!targetTabId.isNullOrBlank()) {
-                    contentArea.selectFirst("div.tab-content div#$targetTabId iframe, div#$targetTabId iframe, div$targetTabId iframe")?.attr("src")
+                    contentArea.selectFirst("div#$targetTabId iframe")?.attr("src")
                 } else null
                 
-                val resolvedIframe = iframeSrc ?: contentArea.select("div.tab-pane iframe, div.panel iframe, iframe").getOrNull(index)?.attr("src")
+                val resolvedIframe = iframeSrc ?: contentArea.select("div.tab-pane iframe").getOrNull(index)?.attr("src")
                 val episodeData = if (!resolvedIframe.isNullOrBlank()) fixUrl(resolvedIframe) else "$url#tab_$index"
 
                 newEpisode(episodeData) {
@@ -149,40 +132,32 @@ class IndiaSocialBook : MainAPI() {
                     this.episode = index + 1
                 }
             }.let { episodes.addAll(it) }
-        } else if (validIframes.size > 1) {
-            validIframes.mapIndexed { index, iframe ->
-                val iframeSrc = iframe.attr("src")
-                val episodeData = if (iframeSrc.isNotBlank()) fixUrl(iframeSrc) else "$url#iframe_$index"
-                newEpisode(episodeData) {
-                    this.name = "Part ${index + 1}"
-                    this.episode = index + 1
-                }
-            }.let { episodes.addAll(it) }
         } else {
-            // Single video page
-            episodes.add(newEpisode(url) { 
-                this.name = title
-                this.episode = 1 
-            })
+            val validIframes = contentArea.select("iframe").filter {
+                val src = it.attr("src")
+                !src.isBlank() && src != "about:blank" && !src.contains("googlesyndication")
+            }
+
+            if (validIframes.isNotEmpty()) {
+                validIframes.mapIndexed { index, iframe ->
+                    val iframeSrc = iframe.attr("src")
+                    newEpisode(fixUrl(iframeSrc)) {
+                        this.name = if (validIframes.size > 1) "Part ${index + 1}" else title
+                        this.episode = index + 1
+                    }
+                }.let { episodes.addAll(it) }
+            } else {
+                episodes.add(newEpisode(url) { this.name = title; this.episode = 1 })
+            }
         }
 
         return if (episodes.size > 1) {
             newTvSeriesLoadResponse(title, url, TvType.NSFW, episodes) {
-                this.posterUrl = poster
-                this.posterHeaders = mainHeaders
-                this.plot = description
-                this.tags = tags
-                this.recommendations = recommendations
-                addActors(actors)
+                this.posterUrl = poster; this.posterHeaders = mainHeaders; this.plot = description; this.tags = tags; this.recommendations = recommendations; addActors(actors)
             }
         } else {
             newMovieLoadResponse(title, url, TvType.NSFW, episodes.firstOrNull()?.data ?: url) {
-                this.posterUrl = poster
-                this.posterHeaders = mainHeaders
-                this.plot = description
-                this.tags = tags
-                this.recommendations = recommendations
-                addActors(actors)
+                this.posterUrl = poster; this.posterHeaders = mainHeaders; this.plot = description; this.tags = tags; this.recommendations = recommendations; addActors(actors)
             }
         }
     }
@@ -191,71 +166,96 @@ class IndiaSocialBook : MainAPI() {
         return this.toSearchResponse()
     }
 
+    private suspend fun extractVideosFromHtml(htmlContent: String, refererUrl: String, callback: (ExtractorLink) -> Unit): Boolean {
+        var found = false
+        val targets = mutableListOf(htmlContent)
+
+        // Decode base64 payloads embedded within player-x.php?q= queries
+        val qParamRegex = "q=([a-zA-Z0-9+/=]+)".toRegex()
+        qParamRegex.findAll(htmlContent).forEach { match ->
+            try {
+                val base64Str = match.groupValues[1]
+                val decodedBytes = Base64.decode(base64Str, Base64.DEFAULT)
+                val decodedString = String(decodedBytes, Charsets.UTF_8)
+                val unescaped = try { URLDecoder.decode(decodedString, "UTF-8") } catch (_: Exception) { decodedString }
+                targets.add(decodedString)
+                targets.add(unescaped)
+            } catch (_: Exception) {}
+        }
+
+        val streamUrlRegex = Regex("[\"'](https?://[^\"']+\\.(m3u8|mp4|ts)[^\"']*)[\"']")
+        for (target in targets) {
+            streamUrlRegex.findAll(target).forEach { match ->
+                var videoUrl = match.groupValues[1]
+                if (videoUrl.startsWith("src=")) {
+                    videoUrl = videoUrl.substringAfter("src=").trim('"', '\'')
+                }
+
+                if (!videoUrl.contains("ads") && !videoUrl.contains("track") && !videoUrl.contains("googlesyndication")) {
+                    found = true
+                    val isM3u8 = videoUrl.contains(".m3u8")
+                    callback.invoke(
+                        newExtractorLink(
+                            source = name,
+                            name = name,
+                            url = fixUrl(videoUrl),
+                            type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                        ) {
+                            this.referer = refererUrl
+                            this.headers = mainHeaders
+                        }
+                    )
+                }
+            }
+        }
+        return found
+    }
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // If data points to an iframe or part tab link, fetch that specific target route
         val targetUrl = data.substringBefore("#")
-        val document = fetchWithAntiBot(targetUrl)
-
-        // If data is a direct iframe link from a tab
-        var searchHtml = document.html()
-        if (data.contains("#tab_") || data.contains("#iframe_")) {
-            val index = data.substringAfter("_").toIntOrNull() ?: 0
-            val iframes = document.select("iframe")
-            if (index < iframes.size) {
-                val iframeSrc = iframes[index].attr("src")
-                if (iframeSrc.isNotBlank()) {
-                    val frameRes = app.get(fixUrl(iframeSrc), headers = mainHeaders)
-                    searchHtml += " " + frameRes.text
-                }
-            }
-        }
-
-        val streamUrlRegex = Regex("[\"'](https?://[^\"']+\\.(m3u8|mp4)[^\"']*)[\"']")
-        val matches = streamUrlRegex.findAll(searchHtml)
-
         var foundLinks = false
-        for (match in matches) {
-            val videoUrl = match.groupValues[1]
-            if (videoUrl.contains("ads") || videoUrl.contains("track")) continue
 
-            foundLinks = true
-            val isM3u8 = videoUrl.contains(".m3u8")
-            
-            callback.invoke(
-                newExtractorLink(
-                    source = name,
-                    name = name,
-                    url = videoUrl,
-                    type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                ) {
-                    this.referer = "$mainUrl/"
-                    this.headers = mainHeaders
+        try {
+            // If data is directly an iframe url from an episode item
+            if (targetUrl.contains("player-x.php")) {
+                if (extractVideosFromHtml(targetUrl, mainUrl, callback)) {
+                    foundLinks = true
                 }
-            )
-        }
+                val iframeDoc = app.get(targetUrl, headers = mainHeaders)
+                if (extractVideosFromHtml(iframeDoc.text, targetUrl, callback)) {
+                    foundLinks = true
+                }
+            } else {
+                val document = fetchWithAntiBot(targetUrl)
+                val pageHtml = document.html()
 
-        if (!foundLinks) {
-            val sourceApiRegex = Regex("source_url\\s*[:=]\\s*['\"]([^'\"]+)['\"]")
-            val apiMatch = sourceApiRegex.find(searchHtml)?.groupValues?.get(1)
-            if (!apiMatch.isNullOrBlank()) {
-                callback.invoke(
-                    newExtractorLink(
-                        source = name,
-                        name = name,
-                        url = fixUrl(apiMatch),
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = "$mainUrl/"
-                        this.headers = mainHeaders
+                if (extractVideosFromHtml(pageHtml, targetUrl, callback)) {
+                    foundLinks = true
+                }
+
+                // Scan all iframes on the page
+                document.select("iframe").forEach { iframe ->
+                    val iframeSrc = fixUrl(iframe.attr("src"))
+                    if (iframeSrc.isNotBlank() && iframeSrc.startsWith("http") && !iframeSrc.contains("googlesyndication")) {
+                        if (extractVideosFromHtml(iframeSrc, targetUrl, callback)) {
+                            foundLinks = true
+                        }
+                        try {
+                            val iframeDoc = app.get(iframeSrc, headers = mapOf("Referer" to targetUrl) + mainHeaders)
+                            if (extractVideosFromHtml(iframeDoc.text, iframeSrc, callback)) {
+                                foundLinks = true
+                            }
+                        } catch (_: Exception) {}
                     }
-                )
-                foundLinks = true
+                }
             }
+        } catch (e: Exception) {
+            Log.d("Cloudstream", "Error loading links: ${e.message}")
         }
 
         return foundLinks
