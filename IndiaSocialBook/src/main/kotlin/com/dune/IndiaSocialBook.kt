@@ -4,6 +4,8 @@ import android.util.Base64
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.utils.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.net.URLDecoder
@@ -57,7 +59,7 @@ class IndiaSocialBook : MainAPI() {
         }
     }
 
-    override suspend fun quickSearch(query: String): List<SearchResponse>? {
+    override suspend fun quickSearch(query: String): List<SearchResponse> {
         val formattedQuery = query.replace(" ", "+")
         val url = "$mainUrl/?s=$formattedQuery"
         val document = app.get(url).document
@@ -80,7 +82,7 @@ class IndiaSocialBook : MainAPI() {
         
         val validIframes = contentArea.select("iframe, embed").filter {
             val src = it.attr("src")
-            !src.isNullOrBlank() && src != "about:blank" && !src.contains("googlesyndication")
+            !src.isBlank() && src != "about:blank" && !src.contains("googlesyndication")
         }
 
         val episodes = mutableListOf<Episode>()
@@ -104,7 +106,7 @@ class IndiaSocialBook : MainAPI() {
         } else if (validIframes.isNotEmpty()) {
             validIframes.mapIndexed { index, iframe ->
                 val iframeSrc = iframe.attr("src")
-                val episodeData = if (!iframeSrc.isNullOrBlank()) fixUrl(iframeSrc) else "$url#iframe_$index"
+                val episodeData = if (iframeSrc.isBlank()) fixUrl(iframeSrc) else "$url#iframe_$index"
                 newEpisode(episodeData) {
                     this.name = if (validIframes.size > 1) "Part ${index + 1}" else title
                     this.episode = index + 1
@@ -139,7 +141,7 @@ class IndiaSocialBook : MainAPI() {
                 val base64Query = inputUrlOrHtml.substringAfter("q=").substringBefore("&")
                 val decodedBytes = Base64.decode(base64Query, Base64.DEFAULT)
                 val decodedString = String(decodedBytes, Charsets.UTF_8)
-                val unescaped = try { URLDecoder.decode(decodedString, "UTF-8") } catch (_: Exception) { decodedString }
+                val unescaped = try { withContext(Dispatchers.IO) { URLDecoder.decode(decodedString, "UTF-8") } } catch (_: Exception) { decodedString }
                 targets.add(decodedString)
                 targets.add(unescaped)
             } catch (_: Exception) {}
@@ -200,7 +202,7 @@ class IndiaSocialBook : MainAPI() {
                     val targetPane = tabPanes.getOrNull(tabIndex)
                     targetPane?.select("iframe")?.forEach { iframe ->
                         val src = iframe.attr("src")
-                        if (!src.isNullOrBlank()) {
+                        if (!src.isBlank()) {
                             if (extractFromUrlOrString(fixUrl(src), targetUrl, callback)) {
                                 foundLinks = true
                             }
@@ -212,7 +214,7 @@ class IndiaSocialBook : MainAPI() {
                 if (!foundLinks) {
                     doc.select("iframe").forEach { iframe ->
                         val src = iframe.attr("src")
-                        if (!src.isNullOrBlank()) {
+                        if (!src.isBlank()) {
                             if (extractFromUrlOrString(fixUrl(src), targetUrl, callback)) {
                                 foundLinks = true
                             }
