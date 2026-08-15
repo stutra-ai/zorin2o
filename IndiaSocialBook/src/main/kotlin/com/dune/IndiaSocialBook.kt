@@ -169,19 +169,27 @@ class IndiaSocialBook : MainAPI() {
         var found = false
         val targets = mutableListOf(htmlContent)
 
-        val qParamRegex = "q=([a-zA-Z0-9%+/=]+)".toRegex(RegexOption.IGNORE_CASE)
+        // Improved multi-pass regex to catch q parameter data safely
+        val qParamRegex = "[?&]q=([^&\\s]+)".toRegex(RegexOption.IGNORE_CASE)
         qParamRegex.findAll(htmlContent).forEach { match ->
             try {
-                val rawParam = match.groupValues[1]
-                val decodedParam = URLDecoder.decode(rawParam, "UTF-8")
+                var rawParam = match.groupValues[1]
+                rawParam = URLDecoder.decode(rawParam, "UTF-8")
                 
-                val base64Bytes = Base64.decode(decodedParam, Base64.DEFAULT)
+                // Add padding if missing to prevent Base64 failure
+                while (rawParam.length % 4 != 0) {
+                    rawParam += "="
+                }
+
+                val base64Bytes = Base64.decode(rawParam, Base64.DEFAULT)
                 val decodedString = String(base64Bytes, Charsets.UTF_8)
                 val unescapedHtml = URLDecoder.decode(decodedString, "UTF-8")
                 
                 targets.add(decodedString)
                 targets.add(unescapedHtml)
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                Log.d("Cloudstream", "Base64 decode error: ${e.message}")
+            }
         }
 
         val streamUrlRegex = Regex("[\"'](https?://[^\"']+\\.(m3u8|mp4|ts)[^\"']*)[\"']")
@@ -226,10 +234,12 @@ class IndiaSocialBook : MainAPI() {
                 if (extractVideosFromHtml(targetUrl, mainUrl, callback)) {
                     foundLinks = true
                 }
-                val iframeDoc = app.get(targetUrl, headers = mainHeaders)
-                if (extractVideosFromHtml(iframeDoc.text, targetUrl, callback)) {
-                    foundLinks = true
-                }
+                try {
+                    val iframeDoc = app.get(targetUrl, headers = mainHeaders)
+                    if (extractVideosFromHtml(iframeDoc.text, targetUrl, callback)) {
+                        foundLinks = true
+                    }
+                } catch (_: Exception) {}
             } else {
                 val document = fetchWithAntiBot(targetUrl)
                 val pageHtml = document.html()
