@@ -46,7 +46,6 @@ class IndiaSocialBook : MainAPI() {
     private suspend fun fetchWithAntiBot(url: String): org.jsoup.nodes.Document {
         var res = app.get(url, headers = mainHeaders)
         if (res.code == 403 || res.code == 503 || res.text.contains("captcha", ignoreCase = true)) {
-            Log.d("Cloudstream", "Anti-bot/Captcha triggered on $url. Attempting to acquire token...")
             try {
                 val captchaToken = APIHolder.getCaptchaToken(url, mainHeaders["User-Agent"] ?: "")
                 if (captchaToken != null) {
@@ -54,9 +53,7 @@ class IndiaSocialBook : MainAPI() {
                     customHeaders["X-Captcha-Token"] = captchaToken
                     res = app.get(url, headers = customHeaders)
                 }
-            } catch (e: Exception) {
-                Log.d("Cloudstream", "Captcha handling failed: ${e.message}")
-            }
+            } catch (_: Exception) {}
         }
         return res.document
     }
@@ -169,27 +166,31 @@ class IndiaSocialBook : MainAPI() {
         var found = false
         val targets = mutableListOf(htmlContent)
 
-        // Improved multi-pass regex to catch q parameter data safely
-        val qParamRegex = "[?&]q=([^&\\s]+)".toRegex(RegexOption.IGNORE_CASE)
+        val qParamRegex = "[?&]q=([^&\"'\\s]+)".toRegex(RegexOption.IGNORE_CASE)
         qParamRegex.findAll(htmlContent).forEach { match ->
             try {
                 var rawParam = match.groupValues[1]
-                rawParam = URLDecoder.decode(rawParam, "UTF-8")
-                
-                // Add padding if missing to prevent Base64 failure
-                while (rawParam.length % 4 != 0) {
-                    rawParam += "="
-                }
+                var previous: String
+                do {
+                    previous = rawParam
+                    rawParam = URLDecoder.decode(rawParam, "UTF-8")
+                } while (rawParam != previous)
 
-                val base64Bytes = Base64.decode(rawParam, Base64.DEFAULT)
-                val decodedString = String(base64Bytes, Charsets.UTF_8)
-                val unescapedHtml = URLDecoder.decode(decodedString, "UTF-8")
+                val cleanBase64 = rawParam.replace(Regex("[^A-Za-z0-9+/=]"), "")
+                val paddedBase64 = cleanBase64.padEnd((cleanBase64.length + 3) / 4 * 4, '=')
+
+                val decodedBytes = Base64.decode(paddedBase64, Base64.DEFAULT)
+                val decodedString = String(decodedBytes, Charsets.UTF_8)
                 
+                var unescapedHtml = decodedString
+                do {
+                    previous = unescapedHtml
+                    unescapedHtml = URLDecoder.decode(unescapedHtml, "UTF-8")
+                } while (unescapedHtml != previous)
+
                 targets.add(decodedString)
                 targets.add(unescapedHtml)
-            } catch (e: Exception) {
-                Log.d("Cloudstream", "Base64 decode error: ${e.message}")
-            }
+            } catch (_: Exception) {}
         }
 
         val streamUrlRegex = Regex("[\"'](https?://[^\"']+\\.(m3u8|mp4|ts)[^\"']*)[\"']")
@@ -230,37 +231,41 @@ class IndiaSocialBook : MainAPI() {
         var foundLinks = false
 
         try {
-            if (targetUrl.contains("player-x.php")) {
-                if (extractVideosFromHtml(targetUrl, mainUrl, callback)) {
-                    foundLinks = true
-                }
-                try {
-                    val iframeDoc = app.get(targetUrl, headers = mainHeaders)
-                    if (extractVideosFromHtml(iframeDoc.text, targetUrl, callback)) {
+            // Direct evaluation of target URL content
+            val document = if (targetUrl.contains("player-x.php")) {
+                app.get(targetUrl, headers = mainHeaders)
+            } else {
+                fetchWithAntiBot(targetUrl)
+            }
+
+            if (extractVideosFromHtml(document.text, targetUrl, callback)) {
+                foundLinks = true
+            }
+
+            // Fallback: intercept via standard WebView helper if direct GET fails
+            if (!foundLinks) {
+                val interceptedLinks = loadExtractor(targetUrl)
+                if (!interceptedLinks.isNullOrEmpty()) {
+                    interceptedLinks.forEach { link ->
+                        callback.invoke(link)
                         foundLinks = true
                     }
-                } catch (_: Exception) {}
-            } else {
-                val document = fetchWithAntiBot(targetUrl)
-                val pageHtml = document.html()
-
-                if (extractVideosFromHtml(pageHtml, targetUrl, callback)) {
-                    foundLinks = true
                 }
+            }
 
-                document.select("iframe").forEach { iframe ->
-                    val iframeSrc = fixUrl(iframe.attr("src"))
-                    if (iframeSrc.isNotBlank() && iframeSrc.startsWith("http") && !iframeSrc.contains("googlesyndication")) {
-                        if (extractVideosFromHtml(iframeSrc, targetUrl, callback)) {
+            // Iterate through any remaining page iframes
+            document.select("iframe").forEach { iframe ->
+                val iframeSrc = fixUrl(iframe.attr("src"))
+                if (iframeSrc.isNotBlank() && iframeSrc.startsWith("http") && !iframeSrc.contains("googlesyndication")) {
+                    if (extractVideosFromHtml(iframeSrc, targetUrl, callback)) {
+                        foundLinks = true
+                    }
+                    try {
+                        val iframeDoc = app.get(iframeSrc, headers = mapOf("Referer" to targetUrl) + mainHeaders)
+                        if (extractVideosFromHtml(iframeDoc.text, iframeSrc, callback)) {
                             foundLinks = true
                         }
-                        try {
-                            val iframeDoc = app.get(iframeSrc, headers = mapOf("Referer" to targetUrl) + mainHeaders)
-                            if (extractVideosFromHtml(iframeDoc.text, iframeSrc, callback)) {
-                                foundLinks = true
-                            }
-                        } catch (_: Exception) {}
-                    }
+                    } catch (_: Exception) {}
                 }
             }
         } catch (e: Exception) {
