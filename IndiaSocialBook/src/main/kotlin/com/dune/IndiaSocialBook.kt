@@ -119,7 +119,6 @@ class IndiaSocialBook : MainAPI() {
                 val tabName = el.text().trim().ifEmpty { "Part ${index + 1}" }
                 val targetTabId = el.attr("data-tab")
                 
-                // Directly locate the iframe inside the corresponding tab-pane (e.g., #tab0, #tab1)
                 val iframeSrc = if (!targetTabId.isNullOrBlank()) {
                     contentArea.selectFirst("div#$targetTabId iframe")?.attr("src")
                 } else null
@@ -170,16 +169,18 @@ class IndiaSocialBook : MainAPI() {
         var found = false
         val targets = mutableListOf(htmlContent)
 
-        // Decode base64 payloads embedded within player-x.php?q= queries
-        val qParamRegex = "q=([a-zA-Z0-9+/=]+)".toRegex()
+        val qParamRegex = "q=([a-zA-Z0-9%+/=]+)".toRegex(RegexOption.IGNORE_CASE)
         qParamRegex.findAll(htmlContent).forEach { match ->
             try {
-                val base64Str = match.groupValues[1]
-                val decodedBytes = Base64.decode(base64Str, Base64.DEFAULT)
-                val decodedString = String(decodedBytes, Charsets.UTF_8)
-                val unescaped = try { URLDecoder.decode(decodedString, "UTF-8") } catch (_: Exception) { decodedString }
+                val rawParam = match.groupValues[1]
+                val decodedParam = URLDecoder.decode(rawParam, "UTF-8")
+                
+                val base64Bytes = Base64.decode(decodedParam, Base64.DEFAULT)
+                val decodedString = String(base64Bytes, Charsets.UTF_8)
+                val unescapedHtml = URLDecoder.decode(decodedString, "UTF-8")
+                
                 targets.add(decodedString)
-                targets.add(unescaped)
+                targets.add(unescapedHtml)
             } catch (_: Exception) {}
         }
 
@@ -221,7 +222,6 @@ class IndiaSocialBook : MainAPI() {
         var foundLinks = false
 
         try {
-            // If data is directly an iframe url from an episode item
             if (targetUrl.contains("player-x.php")) {
                 if (extractVideosFromHtml(targetUrl, mainUrl, callback)) {
                     foundLinks = true
@@ -238,7 +238,6 @@ class IndiaSocialBook : MainAPI() {
                     foundLinks = true
                 }
 
-                // Scan all iframes on the page
                 document.select("iframe").forEach { iframe ->
                     val iframeSrc = fixUrl(iframe.attr("src"))
                     if (iframeSrc.isNotBlank() && iframeSrc.startsWith("http") && !iframeSrc.contains("googlesyndication")) {
