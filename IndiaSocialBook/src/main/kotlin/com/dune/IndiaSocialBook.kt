@@ -2,7 +2,6 @@ package com.dune
 
 import android.util.Base64
 import com.lagradost.cloudstream3.*
-import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import com.lagradost.cloudstream3.utils.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -43,6 +42,13 @@ class IndiaSocialBook : MainAPI() {
         return newSearchResponseList(results, true)
     }
 
+    override suspend fun quickSearch(query: String): List<SearchResponse> {
+        val formattedQuery = query.replace(" ", "+")
+        val url = "$mainUrl/?s=$formattedQuery"
+        val document = app.get(url).document
+        return document.select("article.post, div.thumb-block").mapNotNull { it.toSearchResult() }
+    }
+
     private fun Element.toSearchResult(): SearchResponse? {
         val titleElement = this.selectFirst("h2.entry-title a, .thumb-block a") ?: return null
         val title = titleElement.text().trim()
@@ -57,13 +63,6 @@ class IndiaSocialBook : MainAPI() {
         return newMovieSearchResponse(title, href, TvType.NSFW) {
             this.posterUrl = poster
         }
-    }
-
-    override suspend fun quickSearch(query: String): List<SearchResponse> {
-        val formattedQuery = query.replace(" ", "+")
-        val url = "$mainUrl/?s=$formattedQuery"
-        val document = app.get(url).document
-        return document.select("article.post, div.thumb-block").mapNotNull { it.toSearchResult() }
     }
 
     override suspend fun load(url: String): LoadResponse? {
@@ -127,110 +126,80 @@ class IndiaSocialBook : MainAPI() {
         }
     }
 
-    private suspend fun extractFromUrlOrString(
-        inputUrlOrHtml: String,
-        currentReferer: String,
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
+        subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        var found = false
-        val targets = mutableListOf(inputUrlOrHtml)
-
-        // Decode Base64 from clean-tube-player `player-x.php?q=` iframes
-        if (inputUrlOrHtml.contains("player-x.php?q=")) {
-            try {
-                val base64Query = inputUrlOrHtml.substringAfter("q=").substringBefore("&")
-                val decodedBytes = Base64.decode(base64Query, Base64.DEFAULT)
-                val decodedString = String(decodedBytes, Charsets.UTF_8)
-                val unescaped = try { withContext(Dispatchers.IO) { URLDecoder.decode(decodedString, "UTF-8") } } catch (_: Exception) { decodedString }
-                targets.add(decodedString)
-                targets.add(unescaped)
-            } catch (_: Exception) {}
-        }
-
-        // Regex to find direct video streams or source tags inside the HTML or URL string
-        val regex = "(?:src=[\"']|https?://)[^\"'\\s]+\\.(?:mp4|m3u8)(?:\\?[^\"'\\s]*)?".toRegex(RegexOption.IGNORE_CASE)
-        for (target in targets) {
-            regex.findAll(target).forEach { match ->
-                var url = match.value
-                if (url.startsWith("src=")) {
-                    url = url.substringAfter("src=").trim('"', '\'')
-                }
-                
-                if (!url.contains("googlesyndication") && !url.contains("magsrv") && !url.contains("ad-provider")) {
-                    val videoUrl = fixUrl(url)
-                    val type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                    callback.invoke(
-                        newExtractorLink(
-                            source = name,
-                            name = name,
-                            url = videoUrl,
-                            type = type
-                        ) {
-                            this.referer = currentReferer
-                            this.quality = Qualities.Unknown.value
-                        }
-                    )
-                    found = true
-                }
-            }
-        }
-        return found
-    }
-
-    override suspend fun loadLinks(data: String, isCasting: Boolean, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit): Boolean {
         val headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", "Referer" to mainUrl)
         var foundLinks = false
 
-        // 1. If data itself is a direct iframe link or contains player-x.php
-        if (data.startsWith("http")) {
-            if (extractFromUrlOrString(data, mainUrl, callback)) {
-                foundLinks = true
-            }
-        }
-
-        // 2. Fetch target page and process all iframes/embedded Base64 contents
         val targetUrl = data.substringBefore("#")
         if (targetUrl.isNotBlank() && targetUrl.startsWith("http")) {
             try {
                 val response = app.get(targetUrl, headers = headers)
                 val doc = response.document
 
-                // Check specific tab contents if it's a multi-video page with a tab hash
-                if (data.contains("#tab_")) {
-                    val tabIndex = data.substringAfter("#tab_").toIntOrNull() ?: 0
-                    val tabPanes = doc.select("div.tab-pane")
-                    val targetPane = tabPanes.getOrNull(tabIndex)
-                    targetPane?.select("iframe")?.forEach { iframe ->
-                        val src = iframe.attr("src")
-                        if (!src.isBlank()) {
-                            if (extractFromUrlOrString(fixUrl(src), targetUrl, callback)) {
-                                foundLinks = true
-                            }
+                // Base64 handling for clean-tube-player
+                if (data.contains("player-x.php?q=")) {
+                    try {
+                        val base64Query = data.substringAfter("q=").substringBefore("&")
+                        val decodedBytes = Base64.decode(base64Query, Base64.DEFAULT)
+                        val decoded = String(decodedBytes, Charsets.UTF_8)
+                        val unescaped = withContext(Dispatchers.IO) {
+                            URLDecoder.decode(decoded, "UTF-8")
                         }
+                        val targets = listOf(decoded, unescaped)
+                        
+                        targets.forEach { target ->
+                            if (extractVideoSources(target, targetUrl, callback)) foundLinks = true
+                        }
+                    } catch (_: Exception) {}
+                }
+
+                // Regular iframes
+                doc.select("iframe").forEach { iframe ->
+                    val src = iframe.attr("src")
+                    if (!src.isBlank() && !src.contains("googlesyndication")) {
+                        if (extractVideoSources(fixUrl(src), targetUrl, callback)) foundLinks = true
                     }
                 }
 
-                // Scan all iframes across the whole document as a fallback
-                if (!foundLinks) {
-                    doc.select("iframe").forEach { iframe ->
-                        val src = iframe.attr("src")
-                        if (!src.isBlank()) {
-                            if (extractFromUrlOrString(fixUrl(src), targetUrl, callback)) {
-                                foundLinks = true
-                            }
-                        }
-                    }
-                }
+                // Direct HTML scan
+                if (extractVideoSources(doc.html(), targetUrl, callback)) foundLinks = true
 
-                // Deep document HTML scan for any missed direct mp4/m3u8 or embedded configurations
-                if (!foundLinks) {
-                    if (extractFromUrlOrString(doc.html(), targetUrl, callback)) {
-                        foundLinks = true
-                    }
-                }
             } catch (_: Exception) {}
         }
 
         return foundLinks
+    }
+
+    private fun extractVideoSources(input: String, referer: String, callback: (ExtractorLink) -> Unit): Boolean {
+        var found = false
+        val regex = "(?:src=[\"']|https?://)[^\"'\\s]+\\.(?:mp4|m3u8|webm|mov)(?:\\?[^\"'\\s]*)?".toRegex(RegexOption.IGNORE_CASE)
+
+        regex.findAll(input).forEach { match ->
+            var url = match.value
+            if (url.startsWith("src=")) url = url.substringAfter("src=").trim('"', '\'')
+
+            if (!url.contains("googlesyndication") && !url.contains("magsrv") && !url.contains("ad-provider")) {
+                val videoUrl = fixUrl(url)
+                val type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                callback.invoke(
+                    newExtractorLink(
+                        source = name,
+                        name = name,
+                        url = videoUrl,
+                        type = type
+                    ) {
+                        this.referer = referer
+                        this.quality = Qualities.Unknown.value
+                    }
+                )
+                found = true
+            }
+        }
+        return found
     }
 }
