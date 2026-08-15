@@ -170,21 +170,53 @@ class IndiaSocialBook : MainAPI() {
         var foundLinks = false
 
         try {
-            // Use Cloudstream's built-in WebView interceptor to load the page and capture generated stream URLs
-            val interceptorUrl = if (targetUrl.contains("player-x.php")) targetUrl else {
-                val doc = fetchWithAntiBot(targetUrl)
-                doc.selectFirst("iframe")?.attr("src") ?: targetUrl
+            val document = fetchWithAntiBot(targetUrl)
+            
+            // Look for any video elements or script sources directly hidden in the DOM
+            val sourceTags = document.select("source, video")
+            for (source in sourceTags) {
+                val src = source.attr("src").ifBlank { source.attr("data-src") }
+                if (src.isNotBlank() && src.startsWith("http")) {
+                    foundLinks = true
+                    callback.invoke(
+                        newExtractorLink(
+                            source = name,
+                            name = name,
+                            url = fixUrl(src),
+                            type = ExtractorLinkType.VIDEO
+                        ) {
+                            this.referer = targetUrl
+                            this.headers = mainHeaders
+                        }
+                    )
+                }
             }
 
-            // Safely evaluate via WebView request interceptor
-            loadExtractor(fixUrl(interceptorUrl), targetUrl, subtitleCallback) { link ->
-                if (!link.url.contains("ads") && !link.url.contains("googlesyndication")) {
-                    callback.invoke(link)
-                    foundLinks = true
+            // Fallback: search raw script tags for any embedded file urls
+            document.select("script").forEach { script ->
+                val scriptData = script.data()
+                val urlRegex = Regex("https?://[^\"'\\s]+\\.(mp4|m3u8)")
+                urlRegex.findAll(scriptData).forEach { match ->
+                    val videoUrl = match.value
+                    if (!videoUrl.contains("ads") && !videoUrl.contains("googlesyndication")) {
+                        foundLinks = true
+                        val isM3u8 = videoUrl.contains(".m3u8")
+                        callback.invoke(
+                            newExtractorLink(
+                                source = name,
+                                name = name,
+                                url = fixUrl(videoUrl),
+                                type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                            ) {
+                                this.referer = targetUrl
+                                this.headers = mainHeaders
+                            }
+                        )
+                    }
                 }
             }
         } catch (e: Exception) {
-            Log.d("Cloudstream", "Error loading links via WebView: ${e.message}")
+            Log.d("Cloudstream", "Error loading links: ${e.message}")
         }
 
         return foundLinks
