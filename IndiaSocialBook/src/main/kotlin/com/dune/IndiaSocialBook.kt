@@ -2,13 +2,12 @@ package com.dune
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import org.jsoup.nodes.Element
 import android.util.Log
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 
 class IndiaSocialBook : MainAPI() {
-    override var mainUrl = "https://indiasocialbook.com/videos"
+    override var mainUrl = "https://indiasocialbook.com"
     override var name = "IndiaSocialBook"
     override val hasMainPage = true
     override var lang = "en"
@@ -37,7 +36,6 @@ class IndiaSocialBook : MainAPI() {
 
         Log.d("Cloudstream", "MainPage URL: $url")
 
-        // Handle possible anti-bot/captcha challenges if encountered via Cloudstream helper
         val document = fetchWithAntiBot(url)
         val items = document.select("div.video-item, article, div.card")
 
@@ -57,11 +55,9 @@ class IndiaSocialBook : MainAPI() {
     private suspend fun fetchWithAntiBot(url: String): org.jsoup.nodes.Document {
         var res = app.get(url, headers = mainHeaders)
         
-        // If protected by Cloudflare/Captcha page check
         if (res.code == 403 || res.code == 503 || res.text.contains("captcha", ignoreCase = true)) {
             Log.d("Cloudstream", "Anti-bot/Captcha triggered on $url. Attempting to acquire token...")
             try {
-                // Utilizing Cloudstream's APIHolder captcha solver / bypass mechanism
                 val captchaToken = APIHolder.getCaptchaToken(url, mainHeaders["User-Agent"] ?: "")
                 if (captchaToken != null) {
                     val customHeaders = mainHeaders.toMutableMap()
@@ -104,7 +100,12 @@ class IndiaSocialBook : MainAPI() {
         return newSearchResponseList(results, hasNext = hasNext)
     }
 
-    override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query).results
+    override suspend fun quickSearch(query: String): List<SearchResponse>? {
+        val url = "$mainUrl/videos/search?q=$query&page=1"
+        val document = fetchWithAntiBot(url)
+        val items = document.select("div.video-item, article, div.card")
+        return items.mapNotNull { it.toSearchResponse() }
+    }
 
     override suspend fun load(url: String): LoadResponse {
         val document = fetchWithAntiBot(url)
@@ -149,10 +150,6 @@ class IndiaSocialBook : MainAPI() {
     ): Boolean {
         val document = fetchWithAntiBot(data)
 
-        // Native dynamic rendering stream extraction (Direct embedded player/HLS sources)
-        val scriptContent = document.select("script").html()
-        
-        // Match direct source files or HLS playlists typically embedded in custom player configurations
         val streamUrlRegex = Regex("[\"'](https?://[^\"']+\\.(m3u8|mp4)[^\"']*)[\"']")
         val matches = streamUrlRegex.findAll(document.html())
 
@@ -176,7 +173,6 @@ class IndiaSocialBook : MainAPI() {
             )
         }
 
-        // Fallback: If dynamic stream payload is loaded through an inline JSON payload/API route
         if (!foundLinks) {
             val sourceApiRegex = Regex("source_url\\s*[:=]\\s*['\"]([^'\"]+)['\"]")
             val apiMatch = sourceApiRegex.find(document.html())?.groupValues?.get(1)
