@@ -25,6 +25,7 @@ class IndiaSocialBook : MainAPI() {
         "$mainUrl/actors/" to "Actors"
     )
 
+    // ==================== MAIN PAGE ====================
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = if (page <= 1) request.data else "${request.data.removeSuffix("/")}/page/$page/"
         val document = app.get(url).document
@@ -33,6 +34,7 @@ class IndiaSocialBook : MainAPI() {
         return newHomePageResponse(HomePageList(request.name, results, true), true)
     }
 
+    // ==================== SEARCH ====================
     override suspend fun search(query: String, page: Int): SearchResponseList {
         val formattedQuery = query.replace(" ", "+")
         val url = if (page <= 1) "$mainUrl/?s=$formattedQuery" else "$mainUrl/page/$page/?s=$formattedQuery"
@@ -42,6 +44,7 @@ class IndiaSocialBook : MainAPI() {
         return newSearchResponseList(results, true)
     }
 
+    // ==================== QUICK SEARCH ====================
     override suspend fun quickSearch(query: String): List<SearchResponse> {
         val formattedQuery = query.replace(" ", "+")
         val url = "$mainUrl/?s=$formattedQuery"
@@ -65,6 +68,7 @@ class IndiaSocialBook : MainAPI() {
         }
     }
 
+    // ==================== LOAD (only videos) ====================
     override suspend fun load(url: String): LoadResponse? {
         val headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         val document = app.get(url, headers = headers).document
@@ -117,15 +121,22 @@ class IndiaSocialBook : MainAPI() {
 
         return if (episodes.size > 1) {
             newTvSeriesLoadResponse(title, url, TvType.NSFW, episodes) {
-                this.posterUrl = poster; this.plot = description; this.tags = tags; this.recommendations = recommendations; addActors(actors)
+                this.posterUrl = poster
+                this.plot = description
+                this.tags = tags
+                this.recommendations = recommendations
             }
         } else {
             newMovieLoadResponse(title, url, TvType.NSFW, episodes.firstOrNull()?.data ?: url) {
-                this.posterUrl = poster; this.plot = description; this.tags = tags; this.recommendations = recommendations; addActors(actors)
+                this.posterUrl = poster
+                this.plot = description
+                this.tags = tags
+                this.recommendations = recommendations
             }
         }
     }
 
+    // ==================== LOAD LINKS (no actors) ====================
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -141,7 +152,7 @@ class IndiaSocialBook : MainAPI() {
                 val response = app.get(targetUrl, headers = headers)
                 val doc = response.document
 
-                // Base64 handling for clean-tube-player
+                // Base64 for player-x.php
                 if (data.contains("player-x.php?q=")) {
                     try {
                         val base64Query = data.substringAfter("q=").substringBefore("&")
