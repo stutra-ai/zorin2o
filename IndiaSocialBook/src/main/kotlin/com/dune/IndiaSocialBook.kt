@@ -1,134 +1,143 @@
 package com.dune
 
-import android.util.Base64
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import org.jsoup.nodes.Document
+import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import org.jsoup.nodes.Element
-import java.net.URLDecoder
+import android.util.Log
+import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 
 class IndiaSocialBook : MainAPI() {
-    override var mainUrl = "https://indiasocialbook.com/videos"
+    override var mainUrl = "https://indiasocialbook.com"
     override var name = "IndiaSocialBook"
     override val hasMainPage = true
     override var lang = "en"
-    override val hasQuickSearch = true
-    override val supportedTypes = setOf(TvType.NSFW)
+    override val hasQuickSearch = false
+    override val supportedTypes = setOf(TvType.NSFW, TvType.Movie)
+
+    private val mainHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language" to "en-US,en;q=0.9",
+        "Referer" to "$mainUrl/"
+    )
 
     override val mainPage = mainPageOf(
-        "$mainUrl/" to "Home / Recent",
-        "$mainUrl/blog/" to "Blog",
-        "$mainUrl/categories/" to "Categories",
-        "$mainUrl/tags/" to "Tags",
-        "$mainUrl/actors/" to "Actors"
+        "$mainUrl/videos" to "Home",
+        "$mainUrl/videos/trending" to "Trending",
+        "$mainUrl/videos/latest" to "Latest"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = if (page <= 1) request.data else "${request.data.removeSuffix("/")}/page/$page/"
-        val document = app.get(url).document
+        val url = if (page == 1) {
+            request.data
+        } else {
+            "${request.data}/page/$page"
+        }
+
+        Log.d("Cloudstream", "MainPage URL: $url")
+
+        // Handle possible anti-bot/captcha challenges if encountered via Cloudstream helper
+        val document = fetchWithAntiBot(url)
+        val items = document.select("div.video-item, article, div.card")
+
+        val home = items.mapNotNull { it.toSearchResponse() }
+        val hasNext = home.isNotEmpty()
+
+        return newHomePageResponse(
+            list = HomePageList(
+                name = request.name,
+                list = home,
+                isHorizontalImages = true
+            ),
+            hasNext = hasNext
+        )
+    }
+
+    private suspend fun fetchWithAntiBot(url: String): org.jsoup.nodes.Document {
+        var res = app.get(url, headers = mainHeaders)
         
-        val results = document.select("article.post, div.thumb-block").mapNotNull { it.toSearchResult() }
-        return newHomePageResponse(HomePageList(request.name, results, true), true)
+        // If protected by Cloudflare/Captcha page check
+        if (res.code == 403 || res.code == 503 || res.text.contains("captcha", ignoreCase = true)) {
+            Log.d("Cloudstream", "Anti-bot/Captcha triggered on $url. Attempting to acquire token...")
+            try {
+                // Utilizing Cloudstream's APIHolder captcha solver / bypass mechanism
+                val captchaToken = APIHolder.getCaptchaToken(url, mainHeaders["User-Agent"] ?: "")
+                if (captchaToken != null) {
+                    val customHeaders = mainHeaders.toMutableMap()
+                    customHeaders["X-Captcha-Token"] = captchaToken
+                    res = app.get(url, headers = customHeaders)
+                }
+            } catch (e: Exception) {
+                Log.d("Cloudstream", "Captcha handling failed: ${e.message}")
+            }
+        }
+        return res.document
+    }
+
+    private fun Element.toSearchResponse(): SearchResponse? {
+        val linkElement = this.selectFirst("a")
+        val href = fixUrlNull(linkElement?.attr("href")) ?: return null
+
+        val imgElement = this.selectFirst("img")
+        val title = imgElement?.attr("alt")?.trim()?.ifBlank { null }
+            ?: linkElement?.attr("title")?.trim()?.ifBlank { null }
+            ?: linkElement?.text()?.trim()?.ifBlank { null }
+            ?: return null
+
+        val posterUrl = fixUrlNull(imgElement?.attr("src") ?: imgElement?.attr("data-src"))
+
+        return newMovieSearchResponse(title, href, TvType.NSFW) {
+            this.posterUrl = posterUrl
+            this.posterHeaders = mainHeaders
+        }
     }
 
     override suspend fun search(query: String, page: Int): SearchResponseList {
-        val formattedQuery = query.replace(" ", "+")
-        val url = if (page <= 1) "$mainUrl/?s=$formattedQuery" else "$mainUrl/page/$page/?s=$formattedQuery"
-        val document = app.get(url).document
-        
-        val results = document.select("article.post, div.thumb-block").mapNotNull { it.toSearchResult() }
-        return newSearchResponseList(results, true)
+        val url = "$mainUrl/videos/search?q=$query&page=$page"
+        val document = fetchWithAntiBot(url)
+        val items = document.select("div.video-item, article, div.card")
+
+        val results = items.mapNotNull { it.toSearchResponse() }
+        val hasNext = results.isNotEmpty()
+
+        return newSearchResponseList(results, hasNext = hasNext)
     }
 
-    override suspend fun quickSearch(query: String): List<SearchResponse> {
-        val formattedQuery = query.replace(" ", "+")
-        val url = "$mainUrl/?s=$formattedQuery"
-        val document = app.get(url).document
-        return document.select("article.post, div.thumb-block").mapNotNull { it.toSearchResult() }
+    override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query).results
+
+    override suspend fun load(url: String): LoadResponse {
+        val document = fetchWithAntiBot(url)
+
+        val title = document.selectFirst("h1.video-title, h1")?.text()?.trim() ?: "Unknown"
+        val poster = fixUrlNull(document.selectFirst("meta[property='og:image']")?.attr("content"))
+        val description = document.selectFirst("div.video-description, .description")?.text()?.trim()
+
+        val tags = document.select("div.tags a, .video-tags a").mapNotNull { it.text().trim() }
+        val actors = document.select("div.actors a, .cast a").mapNotNull { Actor(it.text()) }
+
+        val recommendations = document.select("div.related-video, div.card").mapNotNull { it.toRecommendationResult() }
+
+        return newMovieLoadResponse(title, url, TvType.NSFW, url) {
+            this.posterUrl = poster
+            this.posterHeaders = mainHeaders
+            this.plot = description
+            this.tags = tags
+            this.recommendations = recommendations
+            addActors(actors)
+        }
     }
 
-    private fun Element.toSearchResult(): SearchResponse? {
-        val titleElement = this.selectFirst("h2.entry-title a, .thumb-block a") ?: return null
-        val title = titleElement.text().trim()
-        val href = fixUrl(titleElement.attr("href"))
-        
-        val img = this.selectFirst("img")
-        val poster = fixUrlNull(
-            img?.attr("data-src")?.takeIf { it.isNotEmpty() && !it.startsWith("data:") }
-                ?: img?.attr("src")
-        )
+    private fun Element.toRecommendationResult(): SearchResponse? {
+        val title = this.selectFirst("a")?.attr("title")?.trim() 
+            ?: this.selectFirst("img")?.attr("alt")?.trim()
+            ?: return null
+        val href = fixUrlNull(this.selectFirst("a")?.attr("href")) ?: return null
+        val posterUrl = fixUrlNull(this.selectFirst("img")?.attr("src") ?: this.selectFirst("img")?.attr("data-src"))
 
         return newMovieSearchResponse(title, href, TvType.NSFW) {
-            this.posterUrl = poster
-        }
-    }
-
-    override suspend fun load(url: String): LoadResponse? {
-        val headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        val document = app.get(url, headers = headers).document
-        val title = document.selectFirst("h1.entry-title, h1")?.text()?.trim() ?: return null
-        val poster = fixUrlNull(document.selectFirst("meta[property=og:image]")?.attr("content"))
-        val description = document.selectFirst("meta[property=og:description]")?.attr("content")?.trim()
-        
-        val tags = document.select("span.tags-links a, .tagcloud a").map { it.text() }
-        val actors = document.select("span.actor-links a, .template-actors a").map { Actor(it.text()) }
-        val recommendations = document.select("article.post, div.thumb-block").mapNotNull { it.toSearchResult() }
-
-        val contentArea = document.selectFirst("div.entry-content, article.post, div.video-player") ?: document
-        val tabNavs = contentArea.select("ul.tab-nav li")
-        
-        val validIframes = contentArea.select("iframe, embed").filter {
-            val src = it.attr("src")
-            !src.isBlank() && src != "about:blank" && !src.contains("googlesyndication")
-        }
-
-        val episodes = mutableListOf<Episode>()
-
-        if (tabNavs.isNotEmpty()) {
-            tabNavs.mapIndexed { index, el ->
-                val tabName = el.text().trim().ifEmpty { "Part ${index + 1}" }
-                val targetTabId = el.attr("data-tab")
-                val iframeSrc = if (targetTabId.isNotBlank()) {
-                    contentArea.selectFirst("div.tab-content div#$targetTabId iframe, div#$targetTabId iframe")?.attr("src")
-                } else null
-                
-                val resolvedIframe = iframeSrc ?: contentArea.select("div.tab-pane iframe, iframe").getOrNull(index)?.attr("src")
-                val episodeData = if (!resolvedIframe.isNullOrBlank()) fixUrl(resolvedIframe) else "$url#tab_$index"
-
-                newEpisode(episodeData) {
-                    this.name = tabName
-                    this.episode = index + 1
-                }
-            }.let { episodes.addAll(it) }
-        } else if (validIframes.isNotEmpty()) {
-            validIframes.mapIndexed { index, iframe ->
-                val iframeSrc = iframe.attr("src")
-                val episodeData = if (iframeSrc.isBlank()) fixUrl(iframeSrc) else "$url#iframe_$index"
-                newEpisode(episodeData) {
-                    this.name = if (validIframes.size > 1) "Part ${index + 1}" else title
-                    this.episode = index + 1
-                }
-            }.let { episodes.addAll(it) }
-        } else {
-            episodes.add(newEpisode(url) { this.name = title; this.episode = 1 })
-        }
-
-        return if (episodes.size > 1) {
-            newTvSeriesLoadResponse(title, url, TvType.NSFW, episodes) {
-                this.posterUrl = poster
-                this.plot = description
-                this.tags = tags
-                this.recommendations = recommendations
-            }
-        } else {
-            newMovieLoadResponse(title, url, TvType.NSFW, episodes.firstOrNull()?.data ?: url) {
-                this.posterUrl = poster
-                this.plot = description
-                this.tags = tags
-                this.recommendations = recommendations
-            }
+            this.posterUrl = posterUrl
+            this.posterHeaders = mainHeaders
         }
     }
 
@@ -138,74 +147,54 @@ class IndiaSocialBook : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", "Referer" to mainUrl)
+        val document = fetchWithAntiBot(data)
+
+        // Native dynamic rendering stream extraction (Direct embedded player/HLS sources)
+        val scriptContent = document.select("script").html()
+        
+        // Match direct source files or HLS playlists typically embedded in custom player configurations
+        val streamUrlRegex = Regex("[\"'](https?://[^\"']+\\.(m3u8|mp4)[^\"']*)[\"']")
+        val matches = streamUrlRegex.findAll(document.html())
+
         var foundLinks = false
+        for (match in matches) {
+            val videoUrl = match.groupValues[1]
+            if (videoUrl.contains("ads") || videoUrl.contains("track")) continue
 
-        val targetUrl = data.substringBefore("#")
-        if (targetUrl.isNotBlank() && targetUrl.startsWith("http")) {
-            try {
-                val response = app.get(targetUrl, headers = headers)
-                val doc = response.document
-
-                // Base64 player-x.php
-                if (data.contains("player-x.php?q=")) {
-                    try {
-                        val base64Query = data.substringAfter("q=").substringBefore("&")
-                        val decodedBytes = Base64.decode(base64Query, Base64.DEFAULT)
-                        val decoded = String(decodedBytes, Charsets.UTF_8)
-                        val unescaped = withContext(Dispatchers.IO) {
-                            URLDecoder.decode(decoded, "UTF-8")
-                        }
-                        val targets = listOf(decoded, unescaped)
-                        
-                        targets.forEach { target ->
-                            if (extractVideoSources(target, targetUrl, callback)) foundLinks = true
-                        }
-                    } catch (_: Exception) {}
+            foundLinks = true
+            val isM3u8 = videoUrl.contains(".m3u8")
+            
+            callback.invoke(
+                newExtractorLink(
+                    source = name,
+                    name = name,
+                    url = videoUrl,
+                    type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                ) {
+                    this.referer = "$mainUrl/"
                 }
-
-                // Iframes
-                doc.select("iframe").forEach { iframe ->
-                    val src = iframe.attr("src")
-                    if (!src.isBlank() && !src.contains("googlesyndication")) {
-                        if (extractVideoSources(fixUrl(src), targetUrl, callback)) foundLinks = true
-                    }
-                }
-
-                // Direct HTML
-                if (extractVideoSources(doc.html(), targetUrl, callback)) foundLinks = true
-
-            } catch (_: Exception) {}
+            )
         }
 
-        return foundLinks
-    }
-
-    private suspend fun extractVideoSources(input: String, referer: String, callback: (ExtractorLink) -> Unit): Boolean {
-        var found = false
-        val regex = "(?:src=[\"']|https?://)[^\"'\\s]+\\.(?:mp4|m3u8|webm|mov)(?:\\?[^\"'\\s]*)?".toRegex(RegexOption.IGNORE_CASE)
-
-        regex.findAll(input).forEach { match ->
-            var url = match.value
-            if (url.startsWith("src=")) url = url.substringAfter("src=").trim('"', '\'')
-
-            if (!url.contains("googlesyndication") && !url.contains("magsrv") && !url.contains("ad-provider")) {
-                val videoUrl = fixUrl(url)
-                val type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+        // Fallback: If dynamic stream payload is loaded through an inline JSON payload/API route
+        if (!foundLinks) {
+            val sourceApiRegex = Regex("source_url\\s*[:=]\\s*['\"]([^'\"]+)['\"]")
+            val apiMatch = sourceApiRegex.find(document.html())?.groupValues?.get(1)
+            if (!apiMatch.isNullOrBlank()) {
                 callback.invoke(
                     newExtractorLink(
                         source = name,
                         name = name,
-                        url = videoUrl,
-                        type = type
+                        url = fixUrl(apiMatch),
+                        type = ExtractorLinkType.M3U8
                     ) {
-                        this.referer = referer
-                        this.quality = Qualities.Unknown.value
+                        this.referer = "$mainUrl/"
                     }
                 )
-                found = true
+                foundLinks = true
             }
         }
-        return found
+
+        return foundLinks
     }
 }
