@@ -1,4 +1,3 @@
-# ! Bu araç @Kraptor123 tarafından | @Cs-kraptor için yazılmıştır.
 #!/usr/bin/env python3
 # coding: utf-8
 
@@ -139,6 +138,10 @@ class MainUrlUpdater:
 
             mainurl_temiz = self._sadece_domain_al(mainurl)
             if not mainurl_temiz: continue
+
+            if "https://indiasocialbook.com/videos" in mainurl_temiz:
+                logger.info(f"[!] Atlaniyor (Yasakli URL): {mainurl_temiz}")
+                continue
 
             try:
                 istek = self.oturum.get(mainurl_temiz, allow_redirects=True, timeout=15)
