@@ -7,7 +7,7 @@ import android.util.Log
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 
 class IndiaSocialBook : MainAPI() {
-    override var mainUrl = "https://indiasocialbook.com/videos"
+    override var mainUrl = "https://indiasocialbook.com"
     override var name = "IndiaSocialBook"
     override val hasMainPage = true
     override var lang = "en"
@@ -30,7 +30,10 @@ class IndiaSocialBook : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = if (page == 1) request.data else "${request.data}/page/$page"
         val document = fetchWithAntiBot(url)
-        val items = document.select("div.video-item, article, div.card, div.thumb-block")
+        
+        // Expanded selectors to capture any new layout changes
+        val items = document.select("div.video-item, article, div.card, div.thumb-block, div.item, div.col, div.post-box")
+        Log.d("IndiaSocialBook", "getMainPage items found: ${items.size} for url: $url")
 
         val home = items.mapNotNull { it.toSearchResponse() }
         val hasNext = home.isNotEmpty()
@@ -43,6 +46,8 @@ class IndiaSocialBook : MainAPI() {
 
     private suspend fun fetchWithAntiBot(url: String): org.jsoup.nodes.Document {
         var res = app.get(url, headers = mainHeaders)
+        Log.d("IndiaSocialBook", "Fetching URL: $url | Code: ${res.code}")
+        
         if (res.code == 403 || res.code == 503 || res.text.contains("captcha", ignoreCase = true)) {
             try {
                 val captchaToken = APIHolder.getCaptchaToken(url, mainHeaders["User-Agent"] ?: "")
@@ -64,10 +69,15 @@ class IndiaSocialBook : MainAPI() {
         val title = imgElement?.attr("alt")?.trim()?.ifBlank { null }
             ?: linkElement.attr("title").trim().ifBlank { null }
             ?: linkElement.text().trim().ifBlank { null }
-            ?: this.selectFirst("h2, h3")?.text()?.trim()
+            ?: this.selectFirst("h2, h3, .title, .video-title")?.text()?.trim()
             ?: return null
 
-        val posterUrl = fixUrlNull(imgElement?.attr("src") ?: imgElement?.attr("data-src"))
+        val posterUrl = fixUrlNull(
+            imgElement?.attr("src") 
+                ?: imgElement?.attr("data-src") 
+                ?: imgElement?.attr("data-lazy-src")
+                ?: imgElement?.attr("srcset")?.substringBefore(" ")
+        )
 
         return newMovieSearchResponse(title, href, TvType.NSFW) {
             this.posterUrl = posterUrl
@@ -78,7 +88,7 @@ class IndiaSocialBook : MainAPI() {
     override suspend fun search(query: String, page: Int): SearchResponseList {
         val url = "$mainUrl/videos/search?q=$query&page=$page"
         val document = fetchWithAntiBot(url)
-        val items = document.select("div.video-item, article, div.card, div.thumb-block")
+        val items = document.select("div.video-item, article, div.card, div.thumb-block, div.item, div.col, div.post-box")
         val results = items.mapNotNull { it.toSearchResponse() }
         return newSearchResponseList(results, hasNext = results.isNotEmpty())
     }
@@ -86,7 +96,7 @@ class IndiaSocialBook : MainAPI() {
     override suspend fun quickSearch(query: String): List<SearchResponse>? {
         val url = "$mainUrl/videos/search?q=$query&page=1"
         val document = fetchWithAntiBot(url)
-        return document.select("div.video-item, article, div.card, div.thumb-block").mapNotNull { it.toSearchResponse() }
+        return document.select("div.video-item, article, div.card, div.thumb-block, div.item, div.col, div.post-box").mapNotNull { it.toSearchResponse() }
     }
 
     override suspend fun load(url: String): LoadResponse {
@@ -94,18 +104,18 @@ class IndiaSocialBook : MainAPI() {
 
         val title = document.selectFirst("h1.video-title, h1")?.text()?.trim() ?: "Unknown"
         val poster = fixUrlNull(document.selectFirst("meta[property='og:image']")?.attr("content"))
-        val description = document.selectFirst("div.video-description, .description")?.text()?.trim()
+        val description = document.selectFirst("div.video-description, .description, .post-content")?.text()?.trim()
 
-        val tags = document.select("div.tags a, .video-tags a, span.tags-links a").mapNotNull { it.text().trim() }
+        val tags = document.select("div.tags a, .video-tags a, span.tags-links a, .tags a").mapNotNull { it.text().trim() }
         val actors = document.select("div.actors a, .cast a, span.actor-links a").mapNotNull { Actor(it.text()) }
 
         val recommendations = document.select(
             "div.related-video div.thumb-block, div.related-videos article, " +
-            "div.related-posts article, div.card, div.thumb-block, article.post"
+            "div.related-posts article, div.card, div.thumb-block, article.post, div.item"
         ).mapNotNull { it.toRecommendationResult() }.distinctBy { it.url }
 
-        val contentArea = document.selectFirst("div.video-player, div.entry-content, article.post") ?: document
-        val tabNavs = contentArea.select("ul.tab-nav li")
+        val contentArea = document.selectFirst("div.video-player, div.entry-content, article.post, .main-content") ?: document
+        val tabNavs = contentArea.select("ul.tab-nav li, .tabs li, .tab-title")
         
         val episodes = mutableListOf<Episode>()
 
@@ -118,7 +128,7 @@ class IndiaSocialBook : MainAPI() {
                     contentArea.selectFirst("div#$targetTabId iframe")?.attr("src")
                 } else null
                 
-                val resolvedIframe = iframeSrc ?: contentArea.select("div.tab-pane iframe").getOrNull(index)?.attr("src")
+                val resolvedIframe = iframeSrc ?: contentArea.select("div.tab-pane iframe, .tab-content iframe, iframe").getOrNull(index)?.attr("src")
                 val episodeData = if (!resolvedIframe.isNullOrBlank()) fixUrl(resolvedIframe) else "$url#tab_$index"
 
                 newEpisode(episodeData) {
@@ -172,7 +182,6 @@ class IndiaSocialBook : MainAPI() {
         try {
             val document = fetchWithAntiBot(targetUrl)
             
-            // Look for any video elements or script sources directly hidden in the DOM
             val sourceTags = document.select("source, video")
             for (source in sourceTags) {
                 val src = source.attr("src").ifBlank { source.attr("data-src") }
@@ -192,7 +201,6 @@ class IndiaSocialBook : MainAPI() {
                 }
             }
 
-            // Fallback: search raw script tags for any embedded file urls
             document.select("script").forEach { script ->
                 val scriptData = script.data()
                 val urlRegex = Regex("https?://[^\"'\\s]+\\.(mp4|m3u8)")
