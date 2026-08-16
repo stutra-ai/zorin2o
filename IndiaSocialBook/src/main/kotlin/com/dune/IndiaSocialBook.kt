@@ -7,7 +7,7 @@ import android.util.Log
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 
 class IndiaSocialBook : MainAPI() {
-    override var mainUrl = "https://indiasocialbook.com"
+    override var mainUrl = "https://indiasocialbook.com/videos"
     override var name = "IndiaSocialBook"
     override val hasMainPage = true
     override var lang = "en"
