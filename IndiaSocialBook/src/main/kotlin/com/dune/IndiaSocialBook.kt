@@ -29,11 +29,20 @@ class IndiaSocialBook : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = if (page == 1) request.data else "${request.data}/page/$page"
+        
+        // Run automated diagnostic validation check prior to pulling items
+        val diagnostic = ProviderHealthChecker.diagnoseProvider(mainUrl, mainHeaders)
+        Log.d("IndiaSocialBook", "Health Check Status -> Healthy: ${diagnostic.isHealthy}, Items: ${diagnostic.itemsFound}")
+
         val document = fetchWithAntiBot(url)
         
-        // Expanded selectors to capture any new layout changes
-        val items = document.select("div.video-item, article, div.card, div.thumb-block, div.item, div.col, div.post-box")
-        Log.d("IndiaSocialBook", "getMainPage items found: ${items.size} for url: $url")
+        // Automated tag-agnostic & tiered fallback extraction
+        val items = document.select("div.video-item, article, div.card, div.thumb-block, div.item, div.col, div.post-box, div.box").filter {
+            it.selectFirst("a[href]") != null && it.selectFirst("img") != null
+        }.ifEmpty {
+            // Self-healing fallback: if traditional containers change entirely, grab general tags containing links and media
+            document.select("a").filter { it.selectFirst("img") != null && it.attr("href").isNotBlank() }
+        }
 
         val home = items.mapNotNull { it.toSearchResponse() }
         val hasNext = home.isNotEmpty()
@@ -46,8 +55,6 @@ class IndiaSocialBook : MainAPI() {
 
     private suspend fun fetchWithAntiBot(url: String): org.jsoup.nodes.Document {
         var res = app.get(url, headers = mainHeaders)
-        Log.d("IndiaSocialBook", "Fetching URL: $url | Code: ${res.code}")
-        
         if (res.code == 403 || res.code == 503 || res.text.contains("captcha", ignoreCase = true)) {
             try {
                 val captchaToken = APIHolder.getCaptchaToken(url, mainHeaders["User-Agent"] ?: "")
@@ -62,15 +69,15 @@ class IndiaSocialBook : MainAPI() {
     }
 
     private fun Element.toSearchResponse(): SearchResponse? {
-        val linkElement = this.selectFirst("a") ?: return null
+        val linkElement = this.selectFirst("a[href]") ?: this.takeIf { it.tagName() == "a" } ?: return null
         val href = fixUrlNull(linkElement.attr("href")) ?: return null
 
-        val imgElement = this.selectFirst("img")
+        val imgElement = this.selectFirst("img") ?: this.selectFirst("a > img")
         val title = imgElement?.attr("alt")?.trim()?.ifBlank { null }
             ?: linkElement.attr("title").trim().ifBlank { null }
             ?: linkElement.text().trim().ifBlank { null }
-            ?: this.selectFirst("h2, h3, .title, .video-title")?.text()?.trim()
-            ?: return null
+            ?: this.selectFirst("h2, h3, .title, .video-title, p")?.text()?.trim()
+            ?: "Unknown"
 
         val posterUrl = fixUrlNull(
             imgElement?.attr("src") 
@@ -88,7 +95,11 @@ class IndiaSocialBook : MainAPI() {
     override suspend fun search(query: String, page: Int): SearchResponseList {
         val url = "$mainUrl/videos/search?q=$query&page=$page"
         val document = fetchWithAntiBot(url)
-        val items = document.select("div.video-item, article, div.card, div.thumb-block, div.item, div.col, div.post-box")
+        val items = document.select("div.video-item, article, div.card, div.thumb-block, div.item, div.col, div.post-box, div.box").filter {
+            it.selectFirst("a[href]") != null && it.selectFirst("img") != null
+        }.ifEmpty {
+            document.select("a").filter { it.selectFirst("img") != null && it.attr("href").isNotBlank() }
+        }
         val results = items.mapNotNull { it.toSearchResponse() }
         return newSearchResponseList(results, hasNext = results.isNotEmpty())
     }
@@ -96,15 +107,19 @@ class IndiaSocialBook : MainAPI() {
     override suspend fun quickSearch(query: String): List<SearchResponse>? {
         val url = "$mainUrl/videos/search?q=$query&page=1"
         val document = fetchWithAntiBot(url)
-        return document.select("div.video-item, article, div.card, div.thumb-block, div.item, div.col, div.post-box").mapNotNull { it.toSearchResponse() }
+        return document.select("div.video-item, article, div.card, div.thumb-block, div.item, div.col, div.post-box, div.box").filter {
+            it.selectFirst("a[href]") != null && it.selectFirst("img") != null
+        }.ifEmpty {
+            document.select("a").filter { it.selectFirst("img") != null && it.attr("href").isNotBlank() }
+        }.mapNotNull { it.toSearchResponse() }
     }
 
     override suspend fun load(url: String): LoadResponse {
         val document = fetchWithAntiBot(url)
 
-        val title = document.selectFirst("h1.video-title, h1")?.text()?.trim() ?: "Unknown"
+        val title = document.selectFirst("h1.video-title, h1, .title")?.text()?.trim() ?: "Unknown"
         val poster = fixUrlNull(document.selectFirst("meta[property='og:image']")?.attr("content"))
-        val description = document.selectFirst("div.video-description, .description, .post-content")?.text()?.trim()
+        val description = document.selectFirst("div.video-description, .description, .post-content, p")?.text()?.trim()
 
         val tags = document.select("div.tags a, .video-tags a, span.tags-links a, .tags a").mapNotNull { it.text().trim() }
         val actors = document.select("div.actors a, .cast a, span.actor-links a").mapNotNull { Actor(it.text()) }
@@ -228,5 +243,54 @@ class IndiaSocialBook : MainAPI() {
         }
 
         return foundLinks
+    }
+}
+
+// Automated Self-Healing Diagnostic Utility Helper
+object ProviderHealthChecker {
+    data class DiagnosticResult(
+        val isHealthy: Boolean,
+        val itemsFound: Int,
+        val statusCode: Int,
+        val errorMessage: String?
+    )
+
+    suspend fun diagnoseProvider(mainUrl: String, headers: Map<String, String>): DiagnosticResult {
+        return try {
+            val response = app.get("$mainUrl/videos", headers = headers)
+            val statusCode = response.code
+            
+            if (statusCode != 200) {
+                return DiagnosticResult(false, 0, statusCode, "Server returned non-200 code: $statusCode")
+            }
+
+            val document = response.document
+            val selectorFallbacks = listOf(
+                "div.video-item", "article", "div.card", "div.thumb-block", 
+                "div.item", "div.col", "div.post-box", "div.box"
+            )
+
+            var matchedElementsCount = 0
+            for (selector in selectorFallbacks) {
+                val elements = document.select(selector).filter {
+                    it.selectFirst("a[href]") != null && it.selectFirst("img") != null
+                }
+                if (elements.isNotEmpty()) {
+                    matchedElementsCount = elements.size
+                    break
+                }
+            }
+
+            if (matchedElementsCount == 0) {
+                matchedElementsCount = document.select("a").filter { 
+                    it.selectFirst("img") != null && it.attr("href").isNotBlank() 
+                }.size
+            }
+
+            val isHealthy = matchedElementsCount > 0
+            DiagnosticResult(isHealthy, matchedElementsCount, statusCode, if (isHealthy) null else "Layout structure modified.")
+        } catch (e: Exception) {
+            DiagnosticResult(false, 0, -1, e.localizedMessage)
+        }
     }
 }
