@@ -19,6 +19,25 @@
         "fileHash": "sha256-3cd93853e85a5fddddddb4286a030661f27ab2ddb147aff957035e531219a6a3"
     },
     {
+        "url": "https://raw.githubusercontent.com/stutra-ai/zorin2o/builds/DesiHub.cs3",
+        "status": 1,
+        "version": 1,
+        "name": "DesiHub",
+        "internalName": "DesiHub",
+        "authors": [
+            "ByDune"
+        ],
+        "description": "DesiHub",
+        "fileSize": 11377,
+        "repositoryUrl": "https://github.com/stutra-ai/zorin2o",
+        "language": "en",
+        "tvTypes": [
+            "NSFW"
+        ],
+        "apiVersion": 1,
+        "fileHash": "sha256-f74036d697af70875f41dd1c3b6007446d44377091e6b738a8cf8421f531984f"
+    },
+    {
         "url": "https://raw.githubusercontent.com/stutra-ai/zorin2o/builds/IndiaSocialBook.cs3",
         "status": 1,
         "version": 1,
