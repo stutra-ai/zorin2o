@@ -33,8 +33,8 @@ class DesiHub : MainAPI() {
         
         val document = app.get(pageUrl, headers = ajaxHeaders).document
         
-        // Removed broad "article" and "div.box" containers to prevent capturing parent wrappers
-        val list = document.select("div.video-card, article.item, div.item, .list-videos .item").mapNotNull { element ->
+        // Expanded selector list to catch standard theme structures (e.g. smart-item, col, item, etc.)
+        val list = document.select("div.item, article, div.well, .video-item, .thumb-block, div[class*='video'], div[class*='item']").mapNotNull { element ->
             element.toSearchResponse()
         }.distinctBy { it.url }
         
@@ -46,16 +46,22 @@ class DesiHub : MainAPI() {
         val searchUrl = "$mainUrl/search?q=$query"
         val document = app.get(searchUrl, headers = ajaxHeaders).document
         
-        return document.select("div.video-card, article.item, div.item, .list-videos .item").mapNotNull { element ->
+        return document.select("div.item, article, div.well, .video-item, .thumb-block, div[class*='video'], div[class*='item']").mapNotNull { element ->
             element.toSearchResponse()
         }.distinctBy { it.url }
     }
 
     private fun Element.toSearchResponse(): SearchResponse? {
-        val anchor = this.selectFirst("a.title, a.video-title, a[href]") ?: return null
+        // Find the main anchor link pointing to the video
+        val anchor = if (this.tagName() == "a") this else (this.selectFirst("a[href*=\"/video\"], a[href*=\"/watch\"], a.title, a.video-title, a[href]") ?: return null)
         val href = fixUrlNull(anchor.attr("href")) ?: return null
         
-        val title = anchor.text().trim().ifEmpty { anchor.attr("title").trim() }
+        // Skip invalid or non-watch links
+        if (!href.contains("http") && !href.startsWith("/")) return null
+
+        val title = anchor.text().trim().ifEmpty { 
+            this.selectFirst(".title, .video-title, h3, h4")?.text()?.trim() ?: anchor.attr("title").trim() 
+        }
         if (title.isEmpty()) return null
 
         val img = this.selectFirst("img") ?: anchor.selectFirst("img")
@@ -80,7 +86,7 @@ class DesiHub : MainAPI() {
         
         val tags = document.select(".video-tags a, .categories a, .tags a").map { it.text().trim() }
         
-        val recommendations = document.select("div.video-card, article.item, div.item").mapNotNull { element ->
+        val recommendations = document.select("div.item, article, .video-item, div[class*='video']").mapNotNull { element ->
             element.toSearchResponse()
         }.distinctBy { it.url }
 
