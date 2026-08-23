@@ -4,6 +4,11 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import org.jsoup.nodes.Element
+import org.jsoup.nodes.Document
+import org.jsoup.Jsoup
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Headers
 
 class Xbazz : MainAPI() {
     override var mainUrl = "https://xbaaz.com"
@@ -14,6 +19,11 @@ class Xbazz : MainAPI() {
     override val supportedTypes = setOf(TvType.NSFW)
     override val vpnStatus = VPNStatus.MightBeNeeded
 
+    private val client = OkHttpClient.Builder()
+        .followRedirects(true)
+        .followSslRedirects(true)
+        .build()
+
     private val headers = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
@@ -23,6 +33,17 @@ class Xbazz : MainAPI() {
         "Upgrade-Insecure-Requests" to "1",
         "Referer" to "$mainUrl/"
     )
+
+    private fun fetchDocument(url: String): Document {
+        val request = Request.Builder()
+            .url(url)
+            .headers(Headers.of(headers))
+            .build()
+        
+        val response = client.newCall(request).execute()
+        val htmlBody = response.body?.string() ?: ""
+        return Jsoup.parse(htmlBody)
+    }
 
     override val mainPage = mainPageOf(
         "$mainUrl/videos" to "Latest Videos",
@@ -35,7 +56,7 @@ class Xbazz : MainAPI() {
             if (request.data.contains("?")) "${request.data}&page=$page" else "${request.data}?page=$page"
         }
         
-        val document = app.get(pageUrl, headers = headers, allowRedirects = true).document
+        val document = fetchDocument(pageUrl)
         
         val list = document.select("div.video-block").mapNotNull { element ->
             element.toSearchResponse()
@@ -47,7 +68,7 @@ class Xbazz : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse>? {
         val searchUrl = "$mainUrl/search?q=$query"
-        val document = app.get(searchUrl, headers = headers, allowRedirects = true).document
+        val document = fetchDocument(searchUrl)
         
         return document.select("div.video-block").mapNotNull { element ->
             element.toSearchResponse()
@@ -79,7 +100,7 @@ class Xbazz : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val document = app.get(url, headers = headers, allowRedirects = true).document
+        val document = fetchDocument(url)
         
         val title = document.selectFirst("h1.title, h1.video-title, h1")?.text()?.trim() ?: "Xbazz Video"
         val poster = fixUrlNull(document.selectFirst("meta[property=\"og:image\"]")?.attr("content"))
@@ -154,7 +175,7 @@ class Xbazz : MainAPI() {
             return true
         }
 
-        val document = app.get(data, headers = headers, allowRedirects = true).document
+        val document = fetchDocument(data)
         var foundAny = false
 
         val elements = document.select("iframe, source, video, .player-container iframe, .embed-responsive iframe")
