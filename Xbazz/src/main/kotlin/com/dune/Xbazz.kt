@@ -35,9 +35,12 @@ class Xbazz : MainAPI() {
     )
 
     private fun fetchDocument(url: String): Document {
+        val headersBuilder = Headers.Builder()
+        headers.forEach { (key, value) -> headersBuilder.add(key, value) }
+
         val request = Request.Builder()
             .url(url)
-            .headers(Headers.of(headers))
+            .headers(headersBuilder.build())
             .build()
         
         val response = client.newCall(request).execute()
