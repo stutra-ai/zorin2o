@@ -8,12 +8,6 @@ import com.lagradost.cloudstream3.plugins.Plugin
 import android.content.Context
 import org.jsoup.nodes.Element
 
-@CloudstreamPlugin
-class XbazzPlugin : Plugin() {
-    override fun load(context: Context) {
-        registerMainAPI(Xbazz())
-    }
-}
 
 class Xbazz : MainAPI() {
     override var mainUrl = "https://xbaaz.com"
