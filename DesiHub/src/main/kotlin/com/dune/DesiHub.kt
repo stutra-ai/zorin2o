@@ -41,16 +41,13 @@ class DesiHub : MainAPI() {
         return newHomePageResponse(HomePageList(request.name, list, isHorizontalImages = true), hasNext)
     }
 
-    override suspend fun search(query: String, page: Int): SearchResponseList {
-        val searchUrl = if (page <= 1) "$mainUrl/search?q=$query" else "$mainUrl/search?q=$query&page=$page"
+    override suspend fun search(query: String): List<SearchResponse>? {
+        val searchUrl = "$mainUrl/search?q=$query"
         val document = app.get(searchUrl, headers = ajaxHeaders).document
         
-        val results = document.select("div.video-card, article.item, div.item, .list-videos .item, article, div.box").mapNotNull { element ->
+        return document.select("div.video-card, article.item, div.item, .list-videos .item, article, div.box").mapNotNull { element ->
             element.toSearchResponse()
         }.distinctBy { it.url }
-        
-        val hasNext = document.selectFirst("a.next, .pagination-next, a:contains(Next)") != null
-        return newSearchResponseList(results, hasNext)
     }
 
     private fun Element.toSearchResponse(): SearchResponse? {
@@ -70,7 +67,7 @@ class DesiHub : MainAPI() {
     }
 
     override suspend fun quickSearch(query: String): List<SearchResponse>? {
-        return search(query, 1).list
+        return search(query)
     }
 
     override suspend fun load(url: String): LoadResponse? {
@@ -78,7 +75,7 @@ class DesiHub : MainAPI() {
         
         val title = document.selectFirst("h1.title, h1.video-title, h1")?.text()?.trim() ?: "DesiHub Video"
         val poster = fixUrlNull(document.selectFirst("meta[property=\"og:image\"]")?.attr("content"))
-        val description = document.selectFirst("meta[property=\"og:description\"]")?.attr("content")?.trim()
+        val description = document.selectFirst("meta[property=\"og:description\"]")?.attr("content"]?.trim()
         
         val tags = document.select(".video-tags a, .categories a, .tags a").map { it.text().trim() }
         
@@ -121,9 +118,9 @@ class DesiHub : MainAPI() {
                         newExtractorLink(
                             name,
                             label,
-                            fixedUrl,
-                            "$mainUrl/"
+                            fixedUrl
                         ) {
+                            this.referer = "$mainUrl/"
                             this.type = if (fixedUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                             this.quality = Qualities.Unknown.value
                         }
