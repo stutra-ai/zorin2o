@@ -69,88 +69,45 @@ class DesiHub : MainAPI() {
         return newSearchResponseList(results, hasNext = false)
     }
 
-    private fun isValidVideoUrl(url: String): Boolean {
-        if (url.isBlank()) return false
-        val cleanUrl = url.substringBefore("?").lowercase()
-        
-        // Strict Blacklist for any image extensions or non-video assets
-        if (cleanUrl.endsWith(".jpg") || cleanUrl.endsWith(".jpeg") || cleanUrl.endsWith(".png") || 
-            cleanUrl.endsWith(".webp") || cleanUrl.endsWith(".gif") || cleanUrl.endsWith(".svg") || 
-            cleanUrl.endsWith(".ico") || cleanUrl.endsWith(".bmp") || cleanUrl.endsWith(".avif") ||
-            cleanUrl.contains("_next/image") ||
-            cleanUrl.contains("googletagmanager") || 
-            cleanUrl.contains("cloudflare") || 
-            cleanUrl.contains("schema.org") ||
-            cleanUrl.contains("gravatar") ||
-            cleanUrl.contains("logo") ||
-            cleanUrl.contains("icon")) {
-            return false
-        }
-
-        // Accept direct video stream file formats
-        if (cleanUrl.endsWith(".m3u8") || cleanUrl.endsWith(".mp4") || cleanUrl.endsWith(".mkv") || cleanUrl.endsWith(".ts") ||
-            cleanUrl.contains(".m3u8") || cleanUrl.contains(".mp4")) {
-            return true
-        }
-
-        // Accept known video embed or player iframes safely
-        if (cleanUrl.contains("embed") || cleanUrl.contains("player") || 
-            cleanUrl.contains("dood") || cleanUrl.contains("streamtape") || 
-            cleanUrl.contains("voe") || cleanUrl.contains("filemoon") || 
-            cleanUrl.contains("wish") || cleanUrl.contains("mixdrop")) {
-            return true
-        }
-
-        return false
-    }
-
     override suspend fun load(url: String): LoadResponse {
-        val res = app.get(url, headers = mainHeaders)
-        val document = res.document
-        val htmlString = res.text
+        val document = app.get(url, headers = mainHeaders).document
 
         val title = document.selectFirst("h1")?.text()?.trim() ?: "Unknown"
         val poster = fixUrlNull(document.selectFirst("main img")?.attr("src"))
         val description = document.select("main p").joinToString(" ") { it.text() }
 
-        val videoUrls = mutableSetOf<String>()
+        val videoSources = mutableListOf<String>()
 
-        // 1. Collect from <video> and <source> elements
-        document.select("video").forEach { video ->
-            val vUrl = video.attr("src").ifBlank { video.attr("data-src") }
-            if (isValidVideoUrl(vUrl)) videoUrls.add(fixUrl(vUrl))
-
-            video.select("source").forEach { source ->
-                val sUrl = source.attr("src").ifBlank { source.attr("data-src") }
-                if (isValidVideoUrl(sUrl)) videoUrls.add(fixUrl(sUrl))
+        // 1. Target direct HTML5 video elements and source tags inside video containers
+        document.select("video, video source, div.player source").forEach { element ->
+            val src = element.attr("src").ifBlank { element.attr("data-src") }
+            if (src.isNotBlank() && !videoSources.contains(src)) {
+                videoSources.add(fixUrl(src))
             }
         }
 
-        // 2. Collect from valid iframes
+        // 2. Target valid player iframes (excluding ads, trackers, or general UI widgets)
         document.select("iframe").forEach { iframe ->
-            val iUrl = iframe.attr("src").ifBlank { iframe.attr("data-src") }
-            if (isValidVideoUrl(iUrl) && !iUrl.contains("ads") && !iUrl.contains("syndication")) {
-                videoUrls.add(fixUrl(iUrl))
+            val src = iframe.attr("src").ifBlank { iframe.attr("data-src") }
+            if (src.isNotBlank() && 
+                !src.contains("googletagmanager") && 
+                !src.contains("cloudflare") && 
+                !src.contains("ads") && 
+                !src.contains("syndication") &&
+                !videoSources.contains(src)) {
+                videoSources.add(fixUrl(src))
             }
         }
 
-        // 3. Regex scan for stream URLs hidden in scripts/payload
-        val videoUrlRegex = "https?://[^\\s\"']+?\\.(?:m3u8|mp4|ts)(?:\\?[^\\s\"']*)?".toRegex()
-        videoUrlRegex.findAll(htmlString).forEach { matchResult ->
-            val vUrl = matchResult.value.replace("\\/", "/")
-            if (isValidVideoUrl(vUrl)) {
-                videoUrls.add(vUrl)
-            }
+        // Fallback: If no explicit video tags or iframes are found, pass the post URL itself
+        if (videoSources.isEmpty()) {
+            videoSources.add(url)
         }
 
-        // Fallback: If absolutely no video links found, use the page URL itself so loadLinks can process it
-        if (videoUrls.isEmpty()) {
-            videoUrls.add(url)
-        }
-
-        val episodes = videoUrls.mapIndexed { index, vUrl ->
-            newEpisode(vUrl) {
-                name = "Part ${index + 1}"
+        // Map each valid source/iframe strictly to an Episode item
+        val episodes = videoSources.mapIndexed { index, sourceUrl ->
+            newEpisode(sourceUrl) {
+                name = if (videoSources.size == 1) "Full Video" else "Source ${index + 1}"
                 season = 1
                 episode = index + 1
             }
@@ -195,10 +152,12 @@ class DesiHub : MainAPI() {
                 )
             }
             data.contains("desihub.tv/post/") -> {
+                // If fallback page URL was passed, re-scrape inline players
                 val document = app.get(data, headers = mainHeaders).document
-                document.select("video").forEach { video ->
-                    val vUrl = video.attr("src").ifBlank { video.attr("data-src") }
-                    if (isValidVideoUrl(vUrl)) {
+                
+                document.select("video, source").forEach { source ->
+                    val vUrl = source.attr("src").ifBlank { source.attr("data-src") }
+                    if (vUrl.isNotBlank()) {
                         val fixedUrl = fixUrl(vUrl)
                         val type = if (fixedUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                         callback.invoke(
@@ -207,27 +166,17 @@ class DesiHub : MainAPI() {
                             }
                         )
                     }
-                    video.select("source").forEach { source ->
-                        val sUrl = source.attr("src").ifBlank { source.attr("data-src") }
-                        if (isValidVideoUrl(sUrl)) {
-                            val fixedUrl = fixUrl(sUrl)
-                            val type = if (fixedUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                            callback.invoke(
-                                newExtractorLink(name, name, fixedUrl, type) {
-                                    this.referer = mainUrl
-                                }
-                            )
-                        }
-                    }
                 }
+                
                 document.select("iframe").forEach { iframe ->
                     val iUrl = iframe.attr("src").ifBlank { iframe.attr("data-src") }
-                    if (isValidVideoUrl(iUrl)) {
+                    if (iUrl.isNotBlank() && !iUrl.contains("ads")) {
                         loadExtractor(fixUrl(iUrl), data, subtitleCallback, callback)
                     }
                 }
             }
             else -> {
+                // Standard third-party extractor link handling for embedded players
                 loadExtractor(data, mainUrl, subtitleCallback, callback)
             }
         }
