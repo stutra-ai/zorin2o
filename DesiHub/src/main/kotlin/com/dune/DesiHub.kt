@@ -73,22 +73,31 @@ class DesiHub : MainAPI() {
         if (url.isBlank()) return false
         val cleanUrl = url.substringBefore("?").lowercase()
         
-        // Explicitly block all image types and Next.js internal image optimizer routes
+        // Strict Blacklist for any image extensions or non-video assets
         if (cleanUrl.endsWith(".jpg") || cleanUrl.endsWith(".jpeg") || cleanUrl.endsWith(".png") || 
             cleanUrl.endsWith(".webp") || cleanUrl.endsWith(".gif") || cleanUrl.endsWith(".svg") || 
-            cleanUrl.endsWith(".ico") || cleanUrl.contains("_next/image") ||
-            cleanUrl.contains("googletagmanager") || cleanUrl.contains("cloudflare") || cleanUrl.contains("schema.org")) {
+            cleanUrl.endsWith(".ico") || cleanUrl.endsWith(".bmp") || cleanUrl.endsWith(".avif") ||
+            cleanUrl.contains("_next/image") ||
+            cleanUrl.contains("googletagmanager") || 
+            cleanUrl.contains("cloudflare") || 
+            cleanUrl.contains("schema.org") ||
+            cleanUrl.contains("gravatar") ||
+            cleanUrl.contains("logo") ||
+            cleanUrl.contains("icon")) {
             return false
         }
 
-        // Accept direct video stream files
-        if (cleanUrl.endsWith(".m3u8") || cleanUrl.endsWith(".mp4") || cleanUrl.endsWith(".ts") || 
+        // Accept direct video stream file formats
+        if (cleanUrl.endsWith(".m3u8") || cleanUrl.endsWith(".mp4") || cleanUrl.endsWith(".mkv") || cleanUrl.endsWith(".ts") ||
             cleanUrl.contains(".m3u8") || cleanUrl.contains(".mp4")) {
             return true
         }
 
-        // Accept external player iframes or embedded video URLs
-        if (cleanUrl.contains("embed") || cleanUrl.contains("player") || cleanUrl.contains("iframe")) {
+        // Accept known video embed or player iframes safely
+        if (cleanUrl.contains("embed") || cleanUrl.contains("player") || 
+            cleanUrl.contains("dood") || cleanUrl.contains("streamtape") || 
+            cleanUrl.contains("voe") || cleanUrl.contains("filemoon") || 
+            cleanUrl.contains("wish") || cleanUrl.contains("mixdrop")) {
             return true
         }
 
