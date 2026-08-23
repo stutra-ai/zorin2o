@@ -1,48 +1,34 @@
 package com.dune
 
+import com.fasterxml.jackson.annotation.JsonProperty
+import com.fasterxml.jackson.module.kotlin.readValue
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import org.jsoup.nodes.Element
-import android.util.Log
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
-import org.jsoup.Jsoup
+import org.jsoup.nodes.Element
 
-class DesiHub : MainAPI() {
+class Desihub : MainAPI() {
     override var mainUrl = "https://desihub.tv"
-    override var name = "DesiHub"
+    override var name = "Desihub"
     override val hasMainPage = true
-    override var lang = "hi"
-    override val hasQuickSearch = true
-    override val supportedTypes = setOf(TvType.NSFW, TvType.Movie, TvType.AsianDrama)
-
-    private val mainHeaders = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language" to "en-US,en;q=0.9",
-        "Referer" to "$mainUrl/"
-    )
+    override var lang = "en"
+    override val hasQuickSearch = false
+    override val supportedTypes = setOf(TvType.NSFW)
+    override val vpnStatus = VPNStatus.MightBeNeeded
 
     override val mainPage = mainPageOf(
-        "$mainUrl/" to "Home",
-        "$mainUrl/videos/trending" to "Trending",
-        "$mainUrl/videos/latest" to "Latest",
-        "$mainUrl/videos/top-rated" to "Top Rated",
-        "$mainUrl/categories" to "Categories"
+        "${mainUrl}/videos?sort=latest" to "Latest",
+        "${mainUrl}/videos?sort=most_viewed" to "Most Viewed",
+        "${mainUrl}/videos?sort=top_rated" to "Top Rated"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = if (page == 1) {
-            request.data
-        } else {
-            "${request.data.removeSuffix("/")}/page/$page/"
+        val url = if (page <= 1) request.data else "${request.data}&page=$page"
+        val res = app.get(url).document
+        val home = res.select("div.video-card, article.video-item, div.item").mapNotNull {
+            it.mainPageResults()
         }
-
-        val document = app.get(url, headers = mainHeaders).document
-        val items = document.select("div.video-item, article.post, div.item, .well")
-
-        val home = items.mapNotNull { it.toSearchResponse() }
-        val hasNext = home.isNotEmpty()
-
+        val hasNext = res.selectFirst("a:contains(Next), .pagination-next") != null
         return newHomePageResponse(
             list = HomePageList(
                 name = request.name,
@@ -53,67 +39,56 @@ class DesiHub : MainAPI() {
         )
     }
 
-    private fun Element.toSearchResponse(): SearchResponse? {
-        val linkElement = this.selectFirst("a.video-url, h3 a, a")
-        val href = fixUrlNull(linkElement?.attr("href")) ?: return null
-
-        val imgElement = this.selectFirst("img")
-        val title = imgElement?.attr("alt")?.trim()?.ifBlank { null }
-            ?: linkElement?.attr("title")?.trim()?.ifBlank { null }
-            ?: linkElement?.text()?.trim()?.ifBlank { null }
-            ?: return null
-
-        val posterUrl = fixUrlNull(imgElement?.attr("src") ?: imgElement?.attr("data-src"))
-
-        return newMovieSearchResponse(title, href, TvType.NSFW) {
-            this.posterUrl = posterUrl
-            this.posterHeaders = mainHeaders
+    override suspend fun search(query: String, page: Int): SearchResponseList {
+        val url = if (page <= 1) "$mainUrl/search?q=$query" else "$mainUrl/search?q=$query&page=$page"
+        val res = app.get(url).document
+        val results = res.select("div.video-card, article.video-item, div.item").mapNotNull {
+            it.mainPageResults()
         }
+        val hasNext = res.selectFirst("a:contains(Next), .pagination-next") != null
+        return newSearchResponseList(results, hasNext)
     }
 
-    override suspend fun search(query: String): List<SearchResponse> {
-        val url = "$mainUrl/search?q=$query"
-        val document = app.get(url, headers = mainHeaders).document
-        val items = document.select("div.video-item, article.post, div.item")
-
-        return items.mapNotNull { it.toSearchResponse() }
+    private fun Element.mainPageResults(): SearchResponse? {
+        val link = this.selectFirst("a.title, h3 a, a") ?: return null
+        val title = link.text().trim()
+        val href = fixUrlNull(link.attr("href")) ?: return null
+        val img = this.selectFirst("img") ?: return null
+        val poster = fixUrlNull(img.attr("data-src").ifEmpty { img.attr("src") })
+        return newMovieSearchResponse(title, href, TvType.NSFW) {
+            this.posterUrl = poster
+        }
     }
 
     override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query)
 
-    override suspend fun load(url: String): LoadResponse {
-        val document = app.get(url, headers = mainHeaders).document
+    override suspend fun load(url: String): LoadResponse? {
+        val res = app.get(url).document
+        val title = res.selectFirst("h1.video-title, h1")?.text()?.trim() ?: return null
+        val poster = res.selectFirst("meta[property=\"og:image\"]")?.attr("content")
 
-        val title = document.selectFirst("h1.video-title, h1")?.text()?.trim() ?: "Unknown"
-        val poster = fixUrlNull(document.selectFirst("div.video-player img, div.poster img")?.attr("src"))
-        val description = document.select("div.video-description, .description").text().ifBlank { null }
-        
-        val tags = document.select("div.tags a, .video-tags a").mapNotNull { it.text().trim() }
-        val actors = document.select("div.cast a, .actors a").mapNotNull { Actor(it.text()) }
-        
-        val recommendations = document.select("div.related-videos div.video-item, .sidebar-videos article")
-            .mapNotNull { it.toRecommendationResult() }
+        val recommendations = res.select("div.related-videos div.video-card, .sidebar div.item").mapNotNull {
+            val link = it.selectFirst("a") ?: return@mapNotNull null
+            val rectitle = link.text().trim()
+            val rechref = fixUrl(link.attr("href"))
+            val img = it.selectFirst("img") ?: return@mapNotNull null
+            val recposter = img.attr("data-src").ifEmpty { img.attr("src") }
+
+            newMovieSearchResponse(rectitle, rechref, TvType.NSFW) {
+                this.posterUrl = fixUrlNull(recposter)
+            }
+        }
+
+        val actorsList = res.select(".video-actors a, .actors-list a").map {
+            Actor(it.text().trim(), null)
+        }
 
         return newMovieLoadResponse(title, url, TvType.NSFW, url) {
-            this.posterUrl = poster
-            this.posterHeaders = mainHeaders
-            this.plot = description
-            this.tags = tags
+            this.posterUrl = fixUrlNull(poster)
+            this.plot = res.selectFirst("meta[property=\"og:description\"]")?.attr("content")?.trim()
+            this.tags = res.select(".video-tags a, .categories a").map { it.text().trim() }
             this.recommendations = recommendations
-            addActors(actors)
-        }
-    }
-
-    private fun Element.toRecommendationResult(): SearchResponse? {
-        val title = this.selectFirst("img")?.attr("alt")?.trim() ?: this.selectFirst("a")?.text()?.trim()
-        if (title.isNullOrBlank()) return null
-
-        val href = fixUrlNull(this.selectFirst("a")?.attr("href")) ?: return null
-        val posterUrl = fixUrlNull(this.selectFirst("img")?.attr("src"))
-
-        return newMovieSearchResponse(title, href, TvType.NSFW) {
-            this.posterUrl = posterUrl
-            this.posterHeaders = mainHeaders
+            addActors(actorsList)
         }
     }
 
@@ -123,59 +98,38 @@ class DesiHub : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val res = app.get(data, headers = mainHeaders)
-        val document = Jsoup.parse(res.text)
-
-        val serverButtons = document.select("ul.playlist-items li, div.server-tabs button, .video-sources a")
+        val res = app.get(data).document
         
-        if (serverButtons.isEmpty()) {
-            extractVideosFromHtml(res.text, "Source 1", subtitleCallback, callback)
-        } else {
-            for ((index, button) in serverButtons.withIndex()) {
-                val sourceName = button.text().trim().ifBlank { "Source ${index + 1}" }
-                val targetLink = fixUrlNull(button.attr("href")) ?: button.attr("data-url")
+        // Handling pages with multiple videos/players or embedded sources
+        val sources = res.select("iframe, source, video").mapNotNull { element ->
+            element.attr("src").takeIf { it.isNotEmpty() }
+        }.toMutableList()
 
-                if (!targetLink.isNullOrBlank()) {
-                    try {
-                        val serverRes = app.get(targetLink, headers = mainHeaders)
-                        extractVideosFromHtml(serverRes.text, sourceName, subtitleCallback, callback)
-                    } catch (e: Exception) {
-                        Log.d("DesiHub", "Error loading server $sourceName: ${e.message}")
+        // Fallback to script/json extraction if inline players use configs
+        val scriptContent = res.select("script").html()
+        if (sources.isEmpty() && scriptContent.contains("sources")) {
+            // Add custom Regex or JSON fallback parsing block if streams are embedded in JS variables
+        }
+
+        var loadedAny = false
+        sources.forEachIndexed { index, sourceUrl ->
+            val fixedUrl = fixUrl(sourceUrl)
+            if (fixedUrl.isNotBlank()) {
+                callback.invoke(
+                    newExtractorLink(
+                        "$name #${index + 1}",
+                        "$name #${index + 1}",
+                        fixedUrl,
+                        "$mainUrl/"
+                    ) {
+                        this.type = if (fixedUrl.contains(".mp4")) ExtractorLinkType.VIDEO else ExtractorLinkType.M3U8
+                        this.quality = Qualities.Unknown.value
                     }
-                }
+                )
+                loadedAny = true
             }
         }
 
-        return true
-    }
-
-    private suspend fun extractVideosFromHtml(
-        html: String,
-        sourceName: String,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ) {
-        val doc = Jsoup.parse(html)
-        
-        val hlsRegex = Regex("[\"'](https?://[^\"']+\\.m3u8[^\"']*)[\"']")
-        hlsRegex.findAll(html).forEach { match ->
-            val hlsUrl = match.groupValues[1]
-            callback.invoke(
-                newExtractorLink(
-                    source = "$name $sourceName",
-                    name = sourceName,
-                    url = hlsUrl,
-                    type = ExtractorLinkType.M3U8
-                ) {
-                    this.referer = "$mainUrl/"
-                }
-            )
-        }
-
-        val iframes = doc.select("iframe")
-        for (iframe in iframes) {
-            val iframeSrc = fixUrlNull(iframe.attr("src") ?: iframe.attr("data-src")) ?: continue
-            loadExtractor(iframeSrc, subtitleCallback, callback)
-        }
+        return loadedAny
     }
 }
