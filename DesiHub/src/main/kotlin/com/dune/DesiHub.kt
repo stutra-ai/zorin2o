@@ -12,7 +12,7 @@ class DesiHub : MainAPI() {
     override var name = "DesiHub"
     override val hasMainPage = true
     override var lang = "hi"
-    override val hasQuickSearch = false
+    override val hasQuickSearch = true
     override val supportedTypes = setOf(TvType.NSFW, TvType.Movie, TvType.AsianDrama)
 
     private val mainHeaders = mapOf(
@@ -71,18 +71,15 @@ class DesiHub : MainAPI() {
         }
     }
 
-    override suspend fun search(query: String, page: Int): SearchResponseList {
-        val url = "$mainUrl/search?q=$query&page=$page"
+    override suspend fun search(query: String): List<SearchResponse> {
+        val url = "$mainUrl/search?q=$query"
         val document = app.get(url, headers = mainHeaders).document
         val items = document.select("div.video-item, article.post, div.item")
 
-        val results = items.mapNotNull { it.toSearchResponse() }
-        val hasNext = results.isNotEmpty()
-
-        return newSearchResponseList(results, hasNext = hasNext)
+        return items.mapNotNull { it.toSearchResponse() }
     }
 
-    override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query).list
+    override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query)
 
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url, headers = mainHeaders).document
@@ -129,11 +126,9 @@ class DesiHub : MainAPI() {
         val res = app.get(data, headers = mainHeaders)
         val document = Jsoup.parse(res.text)
 
-        // Handle multiple parts/servers or single players dynamically
         val serverButtons = document.select("ul.playlist-items li, div.server-tabs button, .video-sources a")
         
         if (serverButtons.isEmpty()) {
-            // Fallback: If no tabbed playlists, parse direct iframes/sources on the current page
             extractVideosFromHtml(res.text, "Source 1", subtitleCallback, callback)
         } else {
             for ((index, button) in serverButtons.withIndex()) {
@@ -162,7 +157,6 @@ class DesiHub : MainAPI() {
     ) {
         val doc = Jsoup.parse(html)
         
-        // 1. Look for direct M3U8 links inside script tags or video sources
         val hlsRegex = Regex("[\"'](https?://[^\"']+\\.m3u8[^\"']*)[\"']")
         hlsRegex.findAll(html).forEach { match ->
             val hlsUrl = match.groupValues[1]
@@ -178,11 +172,10 @@ class DesiHub : MainAPI() {
             )
         }
 
-        // 2. Look for embedded iframes (e.g. streamtape, doodstream, mixdrop, etc.)
         val iframes = doc.select("iframe")
         for (iframe in iframes) {
             val iframeSrc = fixUrlNull(iframe.attr("src") ?: iframe.attr("data-src")) ?: continue
-            loadExtractor(iframeSrc, data = mainUrl, subtitleCallback, callback)
+            loadExtractor(iframeSrc, subtitleCallback, callback)
         }
     }
 }
