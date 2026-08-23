@@ -33,8 +33,7 @@ class DesiHub : MainAPI() {
         
         val document = app.get(pageUrl, headers = ajaxHeaders).document
         
-        // Expanded selector list to catch standard theme structures (e.g. smart-item, col, item, etc.)
-        val list = document.select("div.item, article, div.well, .video-item, .thumb-block, div[class*='video'], div[class*='item']").mapNotNull { element ->
+        val list = document.select("div.video-card, article.item, div.item, .list-videos .item, article, div.box").mapNotNull { element ->
             element.toSearchResponse()
         }.distinctBy { it.url }
         
@@ -46,22 +45,16 @@ class DesiHub : MainAPI() {
         val searchUrl = "$mainUrl/search?q=$query"
         val document = app.get(searchUrl, headers = ajaxHeaders).document
         
-        return document.select("div.item, article, div.well, .video-item, .thumb-block, div[class*='video'], div[class*='item']").mapNotNull { element ->
+        return document.select("div.video-card, article.item, div.item, .list-videos .item, article, div.box").mapNotNull { element ->
             element.toSearchResponse()
         }.distinctBy { it.url }
     }
 
     private fun Element.toSearchResponse(): SearchResponse? {
-        // Find the main anchor link pointing to the video
-        val anchor = if (this.tagName() == "a") this else (this.selectFirst("a[href*=\"/video\"], a[href*=\"/watch\"], a.title, a.video-title, a[href]") ?: return null)
+        val anchor = this.selectFirst("a.title, a.video-title, a[href]") ?: return null
         val href = fixUrlNull(anchor.attr("href")) ?: return null
         
-        // Skip invalid or non-watch links
-        if (!href.contains("http") && !href.startsWith("/")) return null
-
-        val title = anchor.text().trim().ifEmpty { 
-            this.selectFirst(".title, .video-title, h3, h4")?.text()?.trim() ?: anchor.attr("title").trim() 
-        }
+        val title = anchor.text().trim().ifEmpty { anchor.attr("title").trim() }
         if (title.isEmpty()) return null
 
         val img = this.selectFirst("img") ?: anchor.selectFirst("img")
@@ -86,7 +79,7 @@ class DesiHub : MainAPI() {
         
         val tags = document.select(".video-tags a, .categories a, .tags a").map { it.text().trim() }
         
-        val recommendations = document.select("div.item, article, .video-item, div[class*='video']").mapNotNull { element ->
+        val recommendations = document.select("div.video-card, article.item, div.item").mapNotNull { element ->
             element.toSearchResponse()
         }.distinctBy { it.url }
 
@@ -94,7 +87,60 @@ class DesiHub : MainAPI() {
             Actor(it.text().trim(), null) 
         }
 
-        return newMovieLoadResponse(title, url, TvType.NSFW, url) {
+        // Parse multiple parts/videos on the page as episodes
+        val episodes = mutableListOf<Episode>()
+        val playlistElements = document.select(".playlist-item, .part-item, .episodes-list a, .video-parts a")
+        
+        if (playlistElements.isNotEmpty()) {
+            playlistElements.forEachIndexed { index, element ->
+                val epUrl = fixUrlNull(element.attr("href")) ?: url
+                val epTitle = element.text().trim().ifEmpty { "Part ${index + 1}" }
+                episodes.add(
+                    Episode(
+                        data = epUrl,
+                        name = epTitle,
+                        season = 1,
+                        episode = index + 1,
+                        posterUrl = poster
+                    )
+                )
+            }
+        } else {
+            // Fallback: Check if there are multiple video/iframe elements on the same page
+            val videoElements = document.select("iframe, source, video, .player-container iframe, .embed-responsive iframe")
+            if (videoElements.size > 1) {
+                videoElements.forEachIndexed { index, element ->
+                    val src = element.attr("src").ifEmpty { element.attr("data-src") }
+                    if (src.isNotBlank()) {
+                        val fixedUrl = fixUrl(src) ?: return@forEachIndexed
+                        episodes.add(
+                            Episode(
+                                data = fixedUrl,
+                                name = "Part ${index + 1}",
+                                season = 1,
+                                episode = index + 1,
+                                posterUrl = poster
+                            )
+                        )
+                    }
+                }
+            }
+            
+            // Default single episode if no multiple parts/players found
+            if (episodes.isEmpty()) {
+                episodes.add(
+                    Episode(
+                        data = url,
+                        name = title,
+                        season = 1,
+                        episode = 1,
+                        posterUrl = poster
+                    )
+                )
+            }
+        }
+
+        return newTvSeriesLoadResponse(title, url, TvType.NSFW, episodes) {
             this.posterUrl = poster
             this.plot = description
             this.tags = tags
@@ -109,6 +155,22 @@ class DesiHub : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        // If data is already a direct stream link or specific sub-source
+        if (data.contains(".mp4") || data.contains(".m3u8")) {
+            callback.invoke(
+                newExtractorLink(
+                    name,
+                    "$name Direct Stream",
+                    data
+                ) {
+                    this.referer = "$mainUrl/"
+                    this.type = if (data.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                    this.quality = Qualities.Unknown.value
+                }
+            )
+            return true
+        }
+
         val document = app.get(data, headers = ajaxHeaders).document
         var foundAny = false
 
@@ -139,6 +201,7 @@ class DesiHub : MainAPI() {
             }
         }
 
+        // Script configuration fallback
         val scriptContent = document.select("script").html()
         val urlRegex = "(https?://[^\\s\"']+\\.(?:mp4|m3u8)[^\\s\"']*)".toRegex()
         
