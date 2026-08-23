@@ -97,33 +97,48 @@ class DesiHub : MainAPI() {
     ): Boolean {
         val document = app.get(data, headers = mainHeaders).document
 
-        // Scan direct video sources or embedded player sources
-        val sourceElements = document.select("video source, iframe")
-        
-        for (source in sourceElements) {
+        // 1. Check for direct video tags or sources
+        document.select("video, source").forEach { source ->
             val videoUrl = source.attr("src").ifBlank { source.attr("data-src") }
-            if (videoUrl.isBlank()) continue
-
-            val fixedUrl = fixUrl(videoUrl)
-            
-            if (fixedUrl.contains(".m3u8")) {
+            if (videoUrl.isNotBlank()) {
+                val fixedUrl = fixUrl(videoUrl)
+                val type = if (fixedUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                 callback.invoke(
                     newExtractorLink(
                         source = name,
-                        name = "$name HLS",
+                        name = "$name ${if (type == ExtractorLinkType.M3U8) "HLS" else "MP4"}",
                         url = fixedUrl,
-                        type = ExtractorLinkType.M3U8
+                        type = type
                     ) {
                         this.referer = mainUrl
                     }
                 )
-            } else {
+            }
+        }
+
+        // 2. Check for iframes and pass them through Cloudstream's loadExtractor
+        document.select("iframe").forEach { iframe ->
+            val iframeUrl = iframe.attr("src").ifBlank { iframe.attr("data-src") }
+            if (iframeUrl.isNotBlank()) {
+                val fixedIframeUrl = fixUrl(iframeUrl)
+                loadExtractor(fixedIframeUrl, data, subtitleCallback, callback)
+            }
+        }
+
+        // 3. Fallback: Parse Next.js data script tags if links are embedded in JSON state
+        val nextDataScript = document.selectFirst("script#__NEXT_DATA__")?.data()
+        if (!nextDataScript.isNullOrBlank()) {
+            val videoUrlRegex = "(https?://[^\"']+\\.(?:m3u8|mp4)[^\"']*)".toRegex()
+            videoUrlRegex.findAll(nextDataScript).forEach { matchResult ->
+                val videoUrl = matchResult.value.replace("\\/", "/")
+                val type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                
                 callback.invoke(
                     newExtractorLink(
                         source = name,
-                        name = "$name MP4",
-                        url = fixedUrl,
-                        type = ExtractorLinkType.VIDEO
+                        name = "$name Stream",
+                        url = videoUrl,
+                        type = type
                     ) {
                         this.referer = mainUrl
                     }
