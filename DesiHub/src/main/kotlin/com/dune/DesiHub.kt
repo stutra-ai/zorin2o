@@ -100,16 +100,10 @@ class Desihub : MainAPI() {
     ): Boolean {
         val res = app.get(data).document
         
-        // Handling pages with multiple videos/players or embedded sources
+        // Handles multiple video sources/iframes on a single page
         val sources = res.select("iframe, source, video").mapNotNull { element ->
             element.attr("src").takeIf { it.isNotEmpty() }
         }.toMutableList()
-
-        // Fallback to script/json extraction if inline players use configs
-        val scriptContent = res.select("script").html()
-        if (sources.isEmpty() && scriptContent.contains("sources")) {
-            // Add custom Regex or JSON fallback parsing block if streams are embedded in JS variables
-        }
 
         var loadedAny = false
         sources.forEachIndexed { index, sourceUrl ->
@@ -117,13 +111,13 @@ class Desihub : MainAPI() {
             if (fixedUrl.isNotBlank()) {
                 callback.invoke(
                     newExtractorLink(
+                        name,
                         "$name #${index + 1}",
-                        "$name #${index + 1}",
-                        fixedUrl,
-                        "$mainUrl/"
+                        fixedUrl
                     ) {
                         this.type = if (fixedUrl.contains(".mp4")) ExtractorLinkType.VIDEO else ExtractorLinkType.M3U8
                         this.quality = Qualities.Unknown.value
+                        this.referer = "$mainUrl/"
                     }
                 )
                 loadedAny = true
