@@ -28,14 +28,14 @@
             "ByDune"
         ],
         "description": "DesiHub",
-        "fileSize": 12893,
+        "fileSize": 14001,
         "repositoryUrl": "https://github.com/stutra-ai/zorin2o",
         "language": "en",
         "tvTypes": [
             "NSFW"
         ],
         "apiVersion": 1,
-        "fileHash": "sha256-d085742319af057e30937b29a8c20f5f00e97778cfeeb32d457c4a9f90da01d2"
+        "fileHash": "sha256-3c9c5c9e28fae2d780ab3903210221ad30bfa4e00584fcb551bea5fd4f076163"
     },
     {
         "url": "https://raw.githubusercontent.com/stutra-ai/zorin2o/builds/IndiaSocialBook.cs3",
