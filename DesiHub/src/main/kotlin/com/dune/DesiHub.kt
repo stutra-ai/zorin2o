@@ -105,13 +105,13 @@ class DesiHub : MainAPI() {
         val document = app.get(data, headers = ajaxHeaders).document
         var foundAny = false
 
-        val elements = document.select("iframe, source, video, .player-container iframe")
-        
+        // 1. Check standard tags (iframe, source, video elements)
+        val elements = document.select("iframe, source, video, .player-container iframe, .embed-responsive iframe")
         elements.forEachIndexed { index, element ->
             val src = element.attr("src").ifEmpty { element.attr("data-src") }
             if (src.isNotBlank()) {
                 val fixedUrl = fixUrl(src) ?: return@forEachIndexed
-                val label = "$name #${index + 1}"
+                val label = "$name Player #${index + 1}"
 
                 if (fixedUrl.contains(".mp4") || fixedUrl.contains(".m3u8")) {
                     callback.invoke(
@@ -127,9 +127,34 @@ class DesiHub : MainAPI() {
                     )
                     foundAny = true
                 } else {
-                    loadExtractor(fixedUrl, "$mainUrl/", subtitleCallback, callback)
-                    foundAny = true
+                    safeApiCall {
+                        loadExtractor(fixedUrl, "$mainUrl/", subtitleCallback, callback)
+                        foundAny = true
+                    }
                 }
+            }
+        }
+
+        // 2. Fallback: Parse inline JavaScript configuration blocks or script tags for raw video URLs
+        val scriptContent = document.select("script").html()
+        val urlRegex = "(https?://[^\\s\"']+\\.(?:mp4|m3u8)[^\\s\"']*)".toRegex()
+        
+        urlRegex.findAll(scriptContent).forEach { match ->
+            val rawUrl = match.value.replace("\\/", "/")
+            if (rawUrl.isNotBlank() && !rawUrl.contains("ads")) {
+                val cleanUrl = rawUrl.substringBefore("\"").substringBefore("'")
+                callback.invoke(
+                    newExtractorLink(
+                        name,
+                        "$name Direct Stream",
+                        cleanUrl
+                    ) {
+                        this.referer = "$mainUrl/"
+                        this.type = if (cleanUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                        this.quality = Qualities.Unknown.value
+                    }
+                )
+                foundAny = true
             }
         }
 
