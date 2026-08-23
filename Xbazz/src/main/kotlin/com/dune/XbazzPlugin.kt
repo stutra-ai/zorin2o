@@ -6,6 +6,6 @@ import com.lagradost.cloudstream3.plugins.BasePlugin
 @CloudstreamPlugin
 class XbazzPlugin: BasePlugin() {
     override fun load() {
-        registerMainAPI(DesiHub())
+        registerMainAPI(Xbazz())
     }
 }
