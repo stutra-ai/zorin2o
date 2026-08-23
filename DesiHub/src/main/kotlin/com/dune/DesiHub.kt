@@ -27,9 +27,7 @@ class DesiHub : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val document = app.get(request.data, headers = mainHeaders).document
         
-        // Target post anchor cards directly based on homepage grid structure
         val items = document.select("div.grid a[href^=\"/post/\"]")
-
         val home = items.mapNotNull { it.toSearchResponse() }
         val hasNext = home.isNotEmpty() && page == 1
 
@@ -45,15 +43,11 @@ class DesiHub : MainAPI() {
 
     private fun Element.toSearchResponse(): SearchResponse? {
         val href = fixUrlNull(this.attr("href")) ?: return null
-        
-        // Extract title from the heading inside the card element
         val title = this.selectFirst("h3")?.text()?.trim() ?: return null
         
-        // Extract poster image source (handling Next.js optimized image paths if present)
         val imgElement = this.selectFirst("img")
         val rawImgUrl = imgElement?.attr("src") ?: imgElement?.attr("data-src")
         
-        // Unescape/extract original image URL if it's wrapped inside Next.js image optimizer query params
         val posterUrl = if (rawImgUrl?.contains("url=") == true) {
             rawImgUrl.substringAfter("url=").substringBefore("&").replace("%3A", ":").replace("%2F", "/")
         } else {
@@ -95,9 +89,11 @@ class DesiHub : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val document = app.get(data, headers = mainHeaders).document
+        val res = app.get(data, headers = mainHeaders)
+        val document = res.document
+        val htmlString = res.text
 
-        // 1. Check for direct video tags or sources
+        // 1. Check for standard video tags or sources
         document.select("video, source").forEach { source ->
             val videoUrl = source.attr("src").ifBlank { source.attr("data-src") }
             if (videoUrl.isNotBlank()) {
@@ -116,20 +112,22 @@ class DesiHub : MainAPI() {
             }
         }
 
-        // 2. Check for iframes and pass them through Cloudstream's loadExtractor
+        // 2. Check for iframes
         document.select("iframe").forEach { iframe ->
             val iframeUrl = iframe.attr("src").ifBlank { iframe.attr("data-src") }
             if (iframeUrl.isNotBlank()) {
-                val fixedIframeUrl = fixUrl(iframeUrl)
-                loadExtractor(fixedIframeUrl, data, subtitleCallback, callback)
+                loadExtractor(fixUrl(iframeUrl), data, subtitleCallback, callback)
             }
         }
 
-        // 3. Fallback: Parse Next.js data script tags if links are embedded in JSON state
-        val nextDataScript = document.selectFirst("script#__NEXT_DATA__")?.data()
-        if (!nextDataScript.isNullOrBlank()) {
-            val videoUrlRegex = "(https?://[^\"']+\\.(?:m3u8|mp4)[^\"']*)".toRegex()
-            videoUrlRegex.findAll(nextDataScript).forEach { matchResult ->
+        // 3. Deep-scan script tags and Next.js payload for media URLs
+        val scriptElements = document.select("script")
+        for (script in scriptElements) {
+            val scriptContent = script.data()
+            if (scriptContent.isBlank()) continue
+
+            val videoUrlRegex = "https?://[^\\s\"']+?\\.(?:m3u8|mp4)(?:\\?[^\\s\"']*)?".toRegex()
+            videoUrlRegex.findAll(scriptContent).forEach { matchResult ->
                 val videoUrl = matchResult.value.replace("\\/", "/")
                 val type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                 
@@ -137,6 +135,25 @@ class DesiHub : MainAPI() {
                     newExtractorLink(
                         source = name,
                         name = "$name Stream",
+                        url = videoUrl,
+                        type = type
+                    ) {
+                        this.referer = mainUrl
+                    }
+                )
+            }
+        }
+
+        // 4. Fallback search across the entire raw HTML response text via regex
+        val rawRegex = "https?://[^\\s\"']+?\\.(?:m3u8|mp4)(?:\\?[^\\s\"']*)?".toRegex()
+        rawRegex.findAll(htmlString).forEach { matchResult ->
+            val videoUrl = matchResult.value.replace("\\/", "/")
+            if (!videoUrl.contains("googletagmanager") && !videoUrl.contains("cloudflare")) {
+                val type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                callback.invoke(
+                    newExtractorLink(
+                        source = name,
+                        name = "$name Raw Stream",
                         url = videoUrl,
                         type = type
                     ) {
