@@ -15,9 +15,12 @@ class Xbazz : MainAPI() {
     override val vpnStatus = VPNStatus.MightBeNeeded
 
     private val headers = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
         "Accept-Language" to "en-US,en;q=0.9",
+        "Accept-Encoding" to "gzip, deflate, br",
+        "Connection" to "keep-alive",
+        "Upgrade-Insecure-Requests" to "1",
         "Referer" to "$mainUrl/"
     )
 
@@ -32,14 +35,13 @@ class Xbazz : MainAPI() {
             if (request.data.contains("?")) "${request.data}&page=$page" else "${request.data}?page=$page"
         }
         
-        val document = app.get(pageUrl, headers = headers).document
+        // Use Cloudstream app.get with interceptor capability for cookies/challenges
+        val document = app.get(pageUrl, headers = headers, allowRedirects = true).document
         
-        // Primary and secondary structural selectors
         var list = document.select("div.item, article, div.video-item, div.thumb-block, div.box, .well, div.col-grid, .video-card, div.col-sm-4, div.col-md-3, div.col-lg-3").mapNotNull { element ->
             element.toSearchResponse()
         }.distinctBy { it.url }
 
-        // Bulletproof fallback: If structural selectors fail, scrape any anchor tags with images
         if (list.isEmpty()) {
             list = document.select("a:has(img)").mapNotNull { anchor ->
                 val href = fixUrlNull(anchor.attr("href")) ?: return@mapNotNull null
@@ -64,7 +66,7 @@ class Xbazz : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse>? {
         val searchUrl = "$mainUrl/search?q=$query"
-        val document = app.get(searchUrl, headers = headers).document
+        val document = app.get(searchUrl, headers = headers, allowRedirects = true).document
         
         var list = document.select("div.item, article, div.video-item, div.thumb-block, div.box, .well, div.col-grid, .video-card, div.col-sm-4, div.col-md-3").mapNotNull { element ->
             element.toSearchResponse()
@@ -115,7 +117,7 @@ class Xbazz : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val document = app.get(url, headers = headers).document
+        val document = app.get(url, headers = headers, allowRedirects = true).document
         
         val title = document.selectFirst("h1.title, h1.video-title, h1")?.text()?.trim() ?: "Xbazz Video"
         val poster = fixUrlNull(document.selectFirst("meta[property=\"og:image\"]")?.attr("content"))
@@ -190,7 +192,7 @@ class Xbazz : MainAPI() {
             return true
         }
 
-        val document = app.get(data, headers = headers).document
+        val document = app.get(data, headers = headers, allowRedirects = true).document
         var foundAny = false
 
         val elements = document.select("iframe, source, video, .player-container iframe, .embed-responsive iframe")
