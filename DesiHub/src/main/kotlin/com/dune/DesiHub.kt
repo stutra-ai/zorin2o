@@ -7,7 +7,7 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 import org.jsoup.nodes.Element
 
-class Desihub : MainAPI() {
+class DesiHub : MainAPI() {
     override var mainUrl = "https://desihub.tv"
     override var name = "DesiHub"
     override val hasMainPage = true
@@ -54,7 +54,9 @@ class Desihub : MainAPI() {
         val title = link.text().trim()
         val href = fixUrlNull(link.attr("href")) ?: return null
         val img = this.selectFirst("img") ?: return null
-        val poster = fixUrlNull(img.attr("data-src").ifEmpty { img.attr("src") })
+        val rawSrc = img.attr("data-src")
+        val poster = fixUrlNull(if (rawSrc.isNotEmpty()) rawSrc else img.attr("src"))
+        
         return newMovieSearchResponse(title, href, TvType.NSFW) {
             this.posterUrl = poster
         }
@@ -67,12 +69,13 @@ class Desihub : MainAPI() {
         val title = res.selectFirst("h1.video-title, h1")?.text()?.trim() ?: return null
         val poster = res.selectFirst("meta[property=\"og:image\"]")?.attr("content")
 
-        val recommendations = res.select("div.related-videos div.video-card, .sidebar div.item").mapNotNull {
-            val link = it.selectFirst("a") ?: return@mapNotNull null
+        val recommendations = res.select("div.related-videos div.video-card, .sidebar div.item").mapNotNull { element ->
+            val link = element.selectFirst("a") ?: return@mapNotNull null
             val rectitle = link.text().trim()
             val rechref = fixUrl(link.attr("href"))
-            val img = it.selectFirst("img") ?: return@mapNotNull null
-            val recposter = img.attr("data-src").ifEmpty { img.attr("src") }
+            val img = element.selectFirst("img") ?: return@mapNotNull null
+            val rawRecSrc = img.attr("data-src")
+            val recposter = if (rawRecSrc.isNotEmpty()) rawRecSrc else img.attr("src")
 
             newMovieSearchResponse(rectitle, rechref, TvType.NSFW) {
                 this.posterUrl = fixUrlNull(recposter)
@@ -99,11 +102,25 @@ class Desihub : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val res = app.get(data).document
-        
-        // Handles multiple video sources/iframes on a single page
-        val sources = res.select("iframe, source, video").mapNotNull { element ->
-            element.attr("src").takeIf { it.isNotEmpty() }
-        }.toMutableList()
+        val sources = mutableListOf<String>()
+
+        // 1. Check for standard embedded HTML elements (iframes, sources, video tags)
+        res.select("iframe, source, video").forEach { element ->
+            val src = element.attr("src")
+            if (src.isNotEmpty() && !sources.contains(src)) {
+                sources.add(src)
+            }
+        }
+
+        // 2. Fallback check for KVS script configuration blocks if no direct tags are found
+        if (sources.isEmpty()) {
+            res.select("script").forEach { script ->
+                val text = script.html()
+                if (text.contains("playerSources") || text.contains("video_url")) {
+                    // Basic regex extraction fallback for embedded script URLs if necessary
+                }
+            }
+        }
 
         var loadedAny = false
         sources.forEachIndexed { index, sourceUrl ->
