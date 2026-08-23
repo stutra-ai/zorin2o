@@ -3,11 +3,7 @@ package com.dune
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
-import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
-import com.lagradost.cloudstream3.plugins.Plugin
-import android.content.Context
 import org.jsoup.nodes.Element
-
 
 class Xbazz : MainAPI() {
     override var mainUrl = "https://xbaaz.com"
@@ -38,11 +34,31 @@ class Xbazz : MainAPI() {
         
         val document = app.get(pageUrl, headers = headers).document
         
-        val list = document.select("div.video-card, article.item, div.item, .list-videos .item, article, div.box").mapNotNull { element ->
+        // Primary and secondary structural selectors
+        var list = document.select("div.item, article, div.video-item, div.thumb-block, div.box, .well, div.col-grid, .video-card, div.col-sm-4, div.col-md-3, div.col-lg-3").mapNotNull { element ->
             element.toSearchResponse()
         }.distinctBy { it.url }
+
+        // Bulletproof fallback: If structural selectors fail, scrape any anchor tags with images
+        if (list.isEmpty()) {
+            list = document.select("a:has(img)").mapNotNull { anchor ->
+                val href = fixUrlNull(anchor.attr("href")) ?: return@mapNotNull null
+                val fixedHref = if (href.startsWith("/")) "$mainUrl$href" else href
+                
+                val img = anchor.selectFirst("img") ?: return@mapNotNull null
+                val title = anchor.attr("title").ifEmpty { img.attr("alt").ifEmpty { anchor.text() } }.trim()
+                if (title.isEmpty() || title.length < 2) return@mapNotNull null
+
+                val rawImg = img.attr("data-src").ifEmpty { img.attr("data-lazy-src") }
+                val poster = fixUrlNull(if (rawImg.isNotEmpty()) rawImg else img.attr("src"))
+
+                newMovieSearchResponse(title, fixedHref, TvType.NSFW) {
+                    this.posterUrl = poster
+                }
+            }.distinctBy { it.url }
+        }
         
-        val hasNext = document.selectFirst("a.next, .pagination-next, a:contains(Next)") != null
+        val hasNext = document.selectFirst("a.next, .pagination-next, a:contains(Next), li.next a, a.pagi-next") != null
         return newHomePageResponse(HomePageList(request.name, list, isHorizontalImages = true), hasNext)
     }
 
@@ -50,23 +66,46 @@ class Xbazz : MainAPI() {
         val searchUrl = "$mainUrl/search?q=$query"
         val document = app.get(searchUrl, headers = headers).document
         
-        return document.select("div.video-card, article.item, div.item, .list-videos .item, article, div.box").mapNotNull { element ->
+        var list = document.select("div.item, article, div.video-item, div.thumb-block, div.box, .well, div.col-grid, .video-card, div.col-sm-4, div.col-md-3").mapNotNull { element ->
             element.toSearchResponse()
         }.distinctBy { it.url }
+
+        if (list.isEmpty()) {
+            list = document.select("a:has(img)").mapNotNull { anchor ->
+                val href = fixUrlNull(anchor.attr("href")) ?: return@mapNotNull null
+                val fixedHref = if (href.startsWith("/")) "$mainUrl$href" else href
+                
+                val img = anchor.selectFirst("img") ?: return@mapNotNull null
+                val title = anchor.attr("title").ifEmpty { img.attr("alt").ifEmpty { anchor.text() } }.trim()
+                if (title.isEmpty() || title.length < 2) return@mapNotNull null
+
+                val rawImg = img.attr("data-src").ifEmpty { img.attr("data-lazy-src") }
+                val poster = fixUrlNull(if (rawImg.isNotEmpty()) rawImg else img.attr("src"))
+
+                newMovieSearchResponse(title, fixedHref, TvType.NSFW) {
+                    this.posterUrl = poster
+                }
+            }.distinctBy { it.url }
+        }
+
+        return list
     }
 
     private fun Element.toSearchResponse(): SearchResponse? {
-        val anchor = this.selectFirst("a.title, a.video-title, a[href]") ?: return null
+        val anchor = this.selectFirst("a[href]") ?: return null
         val href = fixUrlNull(anchor.attr("href")) ?: return null
+        val fixedHref = if (href.startsWith("/")) "$mainUrl$href" else href
         
-        val title = anchor.text().trim().ifEmpty { anchor.attr("title").trim() }
+        val imgElement = this.selectFirst("img") ?: anchor.selectFirst("img") ?: return null
+        val title = this.selectFirst(".title, .video-title, h3, h4, .card-title")?.text()?.trim()
+            ?: anchor.attr("title").ifEmpty { imgElement.attr("alt").ifEmpty { anchor.text() } }.trim()
+            
         if (title.isEmpty()) return null
 
-        val img = this.selectFirst("img") ?: anchor.selectFirst("img")
-        val rawImg = img?.attr("data-src")?.ifEmpty { img.attr("data-lazy-src") } ?: ""
-        val poster = fixUrlNull(if (rawImg.isNotEmpty()) rawImg else img?.attr("src"))
+        val rawImg = imgElement.attr("data-src").ifEmpty { imgElement.attr("data-lazy-src") }
+        val poster = fixUrlNull(if (rawImg.isNotEmpty()) rawImg else imgElement.attr("src"))
         
-        return newMovieSearchResponse(title, href, TvType.NSFW) {
+        return newMovieSearchResponse(title, fixedHref, TvType.NSFW) {
             this.posterUrl = poster
         }
     }
@@ -84,7 +123,7 @@ class Xbazz : MainAPI() {
         
         val tags = document.select(".video-tags a, .categories a, .tags a").map { it.text().trim() }
         
-        val recommendations = document.select("div.video-card, article.item, div.item").mapNotNull { element ->
+        val recommendations = document.select("div.item, article, div.video-item, div.thumb-block").mapNotNull { element ->
             element.toSearchResponse()
         }.distinctBy { it.url }
 
@@ -98,9 +137,10 @@ class Xbazz : MainAPI() {
         if (playlistElements.isNotEmpty()) {
             playlistElements.forEachIndexed { index, element ->
                 val epUrl = fixUrlNull(element.attr("href")) ?: url
+                val fixedEpUrl = if (epUrl.startsWith("/")) "$mainUrl$epUrl" else epUrl
                 val epTitle = element.text().trim().ifEmpty { "Part ${index + 1}" }
                 episodes.add(
-                    newEpisode(epUrl) {
+                    newEpisode(fixedEpUrl) {
                         this.name = epTitle
                         this.season = 1
                         this.episode = index + 1
