@@ -14,19 +14,29 @@ class DesiHub : MainAPI() {
     override val supportedTypes = setOf(TvType.NSFW)
     override val vpnStatus = VPNStatus.MightBeNeeded
 
+    private val ajaxHeaders = mapOf(
+        "X-Requested-With" to "XMLHttpRequest",
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    )
+
     override val mainPage = mainPageOf(
         "$mainUrl/videos" to "Latest",
         "$mainUrl/videos?sort=most_viewed" to "Most Viewed",
-        "$mainUrl/videos?sort=top_rated" to "Top Rated"
+        "$mainUrl/videos?sort=top_rated" to "Top Rated",
+        "$mainUrl/uncensored" to "Uncensored"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val pageUrl = if (page <= 1) request.data else "${request.data}&page=$page"
-        val document = app.get(pageUrl).document
-        
-        val list = document.select("div.video-item, div.item, article, div.card, div.video-card").mapNotNull { element ->
-            element.toSearchResponse()
+        val pageUrl = if (page <= 1) request.data else {
+            if (request.data.contains("?")) "${request.data}&page=$page" else "${request.data}?page=$page"
         }
+        
+        // Fetch using AJAX headers to capture dynamically rendered or async-loaded grids
+        val document = app.get(pageUrl, headers = ajaxHeaders).document
+        
+        val list = document.select("div.video-card, article.item, div.item, .list-videos .item, article, div.box").mapNotNull { element ->
+            element.toSearchResponse()
+        }.distinctBy { it.url }
         
         val hasNext = document.selectFirst("a.next, .pagination-next, a:contains(Next)") != null
         return newHomePageResponse(HomePageList(request.name, list, isHorizontalImages = true), hasNext)
@@ -34,24 +44,26 @@ class DesiHub : MainAPI() {
 
     override suspend fun search(query: String, page: Int): SearchResponseList {
         val searchUrl = if (page <= 1) "$mainUrl/search?q=$query" else "$mainUrl/search?q=$query&page=$page"
-        val document = app.get(searchUrl).document
+        val document = app.get(searchUrl, headers = ajaxHeaders).document
         
-        val results = document.select("div.video-item, div.item, article, div.card, div.video-card").mapNotNull { element ->
+        val results = document.select("div.video-card, article.item, div.item, .list-videos .item, article, div.box").mapNotNull { element ->
             element.toSearchResponse()
-        }
+        }.distinctBy { it.url }
         
         val hasNext = document.selectFirst("a.next, .pagination-next, a:contains(Next)") != null
         return newSearchResponseList(results, hasNext)
     }
 
     private fun Element.toSearchResponse(): SearchResponse? {
-        val anchor = this.selectFirst("a.title, h3 a, a.video-title, a") ?: return null
-        val title = anchor.text().trim()
+        val anchor = this.selectFirst("a.title, a.video-title, a[href]") ?: return null
         val href = fixUrlNull(anchor.attr("href")) ?: return null
         
-        val img = this.selectFirst("img")
-        val rawImg = img?.attr("data-src")
-        val poster = fixUrlNull(if (!rawImg.isNullOrEmpty()) rawImg else img?.attr("src"))
+        val title = anchor.text().trim().ifEmpty { anchor.attr("title").trim() }
+        if (title.isEmpty()) return null
+
+        val img = this.selectFirst("img") ?: anchor.selectFirst("img")
+        val rawImg = img?.attr("data-src")?.ifEmpty { img.attr("data-lazy-src") } ?: ""
+        val poster = fixUrlNull(if (rawImg.isNotEmpty()) rawImg else img?.attr("src"))
         
         return newMovieSearchResponse(title, href, TvType.NSFW) {
             this.posterUrl = poster
@@ -63,19 +75,19 @@ class DesiHub : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val document = app.get(url).document
+        val document = app.get(url, headers = ajaxHeaders).document
         
         val title = document.selectFirst("h1.title, h1.video-title, h1")?.text()?.trim() ?: "DesiHub Video"
         val poster = fixUrlNull(document.selectFirst("meta[property=\"og:image\"]")?.attr("content"))
         val description = document.selectFirst("meta[property=\"og:description\"]")?.attr("content")?.trim()
         
-        val tags = document.select(".tags a, .categories a, .video-tags a").map { it.text().trim() }
+        val tags = document.select(".video-tags a, .categories a, .tags a").map { it.text().trim() }
         
-        val recommendations = document.select("div.related-videos div.item, div.video-item, .sidebar article").mapNotNull { element ->
+        val recommendations = document.select("div.video-card, article.item, div.item").mapNotNull { element ->
             element.toSearchResponse()
-        }
+        }.distinctBy { it.url }
 
-        val actors = document.select(".actors a, .video-actors a").map { 
+        val actors = document.select(".video-actors a, .actors a").map { 
             Actor(it.text().trim(), null) 
         }
 
@@ -94,11 +106,10 @@ class DesiHub : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val document = app.get(data).document
+        val document = app.get(data, headers = ajaxHeaders).document
         var foundAny = false
 
-        // Collect all potential video holders, iframes, or source elements to support multi-video pages
-        val elements = document.select("iframe, source, video, .player-embed iframe, .video-container iframe, embed")
+        val elements = document.select("iframe, source, video, .player-container iframe")
         
         elements.forEachIndexed { index, element ->
             val src = element.attr("src").ifEmpty { element.attr("data-src") }
@@ -120,7 +131,6 @@ class DesiHub : MainAPI() {
                     )
                     foundAny = true
                 } else {
-                    // Automatically pass embedded iframe players through Cloudstream's extractor resolvers
                     safeApiCall {
                         loadExtractor(fixedUrl, "$mainUrl/", subtitleCallback, callback)
                         foundAny = true
