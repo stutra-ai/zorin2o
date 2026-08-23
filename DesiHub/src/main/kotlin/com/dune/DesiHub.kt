@@ -106,14 +106,13 @@ class DesiHub : MainAPI() {
             videoUrls.add(url)
         }
 
-        // Map each discovered video source to an individual Episode item
+        // Map each discovered video source to an individual Episode using the new builder syntax
         val episodes = videoUrls.mapIndexed { index, vUrl ->
-            Episode(
-                data = vUrl,
-                name = "Part ${index + 1}",
-                season = 1,
+            newEpisode(vUrl) {
+                name = "Part ${index + 1}"
+                season = 1
                 episode = index + 1
-            )
+            }
         }
 
         return newTvSeriesLoadResponse(title, url, TvType.NSFW, episodes) {
@@ -155,7 +154,6 @@ class DesiHub : MainAPI() {
                 )
             }
             data.contains("desihub.tv/post/") -> {
-                // Fallback check if page URL was passed
                 val document = app.get(data, headers = mainHeaders).document
                 document.select("video, source").forEach { source ->
                     val vUrl = source.attr("src").ifBlank { source.attr("data-src") }
@@ -177,7 +175,6 @@ class DesiHub : MainAPI() {
                 }
             }
             else -> {
-                // If it's a third-party embedded player iframe link
                 loadExtractor(data, mainUrl, subtitleCallback, callback)
             }
         }
