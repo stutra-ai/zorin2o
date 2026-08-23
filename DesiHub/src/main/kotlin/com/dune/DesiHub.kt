@@ -134,7 +134,7 @@ class DesiHub : MainAPI() {
                 addActors(actors)
             }
         } else {
-            newMovieLoadResponse(title, url, TvType.NSFW) {
+            newMovieLoadResponse(title, url, TvType.NSFW, url) {
                 this.posterUrl = poster
                 this.plot = description
                 this.tags = tags
