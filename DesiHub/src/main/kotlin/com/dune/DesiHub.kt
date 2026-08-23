@@ -87,7 +87,7 @@ class DesiHub : MainAPI() {
             Actor(it.text().trim(), null) 
         }
 
-        // Parse multiple parts/videos on the page as episodes
+        // Parse multiple parts/videos on the page as episodes using newEpisode builder
         val episodes = mutableListOf<Episode>()
         val playlistElements = document.select(".playlist-item, .part-item, .episodes-list a, .video-parts a")
         
@@ -96,13 +96,12 @@ class DesiHub : MainAPI() {
                 val epUrl = fixUrlNull(element.attr("href")) ?: url
                 val epTitle = element.text().trim().ifEmpty { "Part ${index + 1}" }
                 episodes.add(
-                    Episode(
-                        data = epUrl,
-                        name = epTitle,
-                        season = 1,
-                        episode = index + 1,
-                        posterUrl = poster
-                    )
+                    newEpisode(epUrl) {
+                        this.name = epTitle
+                        this.season = 1
+                        this.episode = index + 1
+                        this.posterUrl = poster
+                    }
                 )
             }
         } else {
@@ -114,13 +113,12 @@ class DesiHub : MainAPI() {
                     if (src.isNotBlank()) {
                         val fixedUrl = fixUrl(src) ?: return@forEachIndexed
                         episodes.add(
-                            Episode(
-                                data = fixedUrl,
-                                name = "Part ${index + 1}",
-                                season = 1,
-                                episode = index + 1,
-                                posterUrl = poster
-                            )
+                            newEpisode(fixedUrl) {
+                                this.name = "Part ${index + 1}"
+                                this.season = 1
+                                this.episode = index + 1
+                                this.posterUrl = poster
+                            }
                         )
                     }
                 }
@@ -129,13 +127,12 @@ class DesiHub : MainAPI() {
             // Default single episode if no multiple parts/players found
             if (episodes.isEmpty()) {
                 episodes.add(
-                    Episode(
-                        data = url,
-                        name = title,
-                        season = 1,
-                        episode = 1,
-                        posterUrl = poster
-                    )
+                    newEpisode(url) {
+                        this.name = title
+                        this.season = 1
+                        this.episode = 1
+                        this.posterUrl = poster
+                    }
                 )
             }
         }
@@ -155,7 +152,6 @@ class DesiHub : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        // If data is already a direct stream link or specific sub-source
         if (data.contains(".mp4") || data.contains(".m3u8")) {
             callback.invoke(
                 newExtractorLink(
@@ -201,7 +197,6 @@ class DesiHub : MainAPI() {
             }
         }
 
-        // Script configuration fallback
         val scriptContent = document.select("script").html()
         val urlRegex = "(https?://[^\\s\"']+\\.(?:mp4|m3u8)[^\\s\"']*)".toRegex()
         
