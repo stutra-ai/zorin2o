@@ -127,10 +127,9 @@ class DesiHub : MainAPI() {
                     )
                     foundAny = true
                 } else {
-                    safeApiCall {
-                        loadExtractor(fixedUrl, "$mainUrl/", subtitleCallback, callback)
-                        foundAny = true
-                    }
+                    // Correct handling of suspending extractor loading within coroutine flow
+                    loadExtractor(fixedUrl, "$mainUrl/", subtitleCallback, callback)
+                    foundAny = true
                 }
             }
         }
