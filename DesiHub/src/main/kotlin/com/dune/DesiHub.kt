@@ -70,13 +70,53 @@ class DesiHub : MainAPI() {
     }
 
     override suspend fun load(url: String): LoadResponse {
-        val document = app.get(url, headers = mainHeaders).document
+        val res = app.get(url, headers = mainHeaders)
+        val document = res.document
+        val htmlString = res.text
 
         val title = document.selectFirst("h1")?.text()?.trim() ?: "Unknown"
         val poster = fixUrlNull(document.selectFirst("main img")?.attr("src"))
         val description = document.select("main p").joinToString(" ") { it.text() }
 
-        return newMovieLoadResponse(title, url, TvType.NSFW, url) {
+        val videoUrls = mutableSetOf<String>()
+
+        // 1. Collect HTML5 video tags or sources
+        document.select("video, source").forEach { source ->
+            val vUrl = source.attr("src").ifBlank { source.attr("data-src") }
+            if (vUrl.isNotBlank()) videoUrls.add(fixUrl(vUrl))
+        }
+
+        // 2. Collect iframes
+        document.select("iframe").forEach { iframe ->
+            val iUrl = iframe.attr("src").ifBlank { iframe.attr("data-src") }
+            if (iUrl.isNotBlank()) videoUrls.add(fixUrl(iUrl))
+        }
+
+        // 3. Regex scan for m3u8/mp4 streams hidden in script/data payload
+        val videoUrlRegex = "https?://[^\\s\"']+?\\.(?:m3u8|mp4|ts)(?:\\?[^\\s\"']*)?".toRegex()
+        videoUrlRegex.findAll(htmlString).forEach { matchResult ->
+            val vUrl = matchResult.value.replace("\\/", "/")
+            if (!vUrl.contains("googletagmanager") && !vUrl.contains("cloudflare") && !vUrl.contains("schema.org")) {
+                videoUrls.add(vUrl)
+            }
+        }
+
+        // Fallback: If no specific video links found, store the page URL itself
+        if (videoUrls.isEmpty()) {
+            videoUrls.add(url)
+        }
+
+        // Map each discovered video source to an individual Episode item
+        val episodes = videoUrls.mapIndexed { index, vUrl ->
+            Episode(
+                data = vUrl,
+                name = "Part ${index + 1}",
+                season = 1,
+                episode = index + 1
+            )
+        }
+
+        return newTvSeriesLoadResponse(title, url, TvType.NSFW, episodes) {
             this.posterUrl = poster
             this.posterHeaders = mainHeaders
             this.plot = description
@@ -89,53 +129,56 @@ class DesiHub : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val res = app.get(data, headers = mainHeaders)
-        val document = res.document
-        val htmlString = res.text
-
-        // 1. Check standard HTML5 video elements or sources
-        document.select("video, source").forEach { source ->
-            val videoUrl = source.attr("src").ifBlank { source.attr("data-src") }
-            if (videoUrl.isNotBlank()) {
-                val fixedUrl = fixUrl(videoUrl)
-                val type = if (fixedUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+        when {
+            data.contains(".m3u8") -> {
                 callback.invoke(
                     newExtractorLink(
                         source = name,
-                        name = "$name ${if (type == ExtractorLinkType.M3U8) "HLS" else "MP4"}",
-                        url = fixedUrl,
-                        type = type
+                        name = "$name HLS",
+                        url = data,
+                        type = ExtractorLinkType.M3U8
                     ) {
                         this.referer = mainUrl
                     }
                 )
             }
-        }
-
-        // 2. Check for embedded third-party player iframes
-        document.select("iframe").forEach { iframe ->
-            val iframeUrl = iframe.attr("src").ifBlank { iframe.attr("data-src") }
-            if (iframeUrl.isNotBlank()) {
-                loadExtractor(fixUrl(iframeUrl), data, subtitleCallback, callback)
-            }
-        }
-
-        // 3. Regex scan for hidden stream file signatures in raw script chunks or text
-        val videoUrlRegex = "https?://[^\\s\"']+?\\.(?:m3u8|mp4|ts)(?:\\?[^\\s\"']*)?".toRegex()
-        videoUrlRegex.findAll(htmlString).forEach { matchResult ->
-            var videoUrl = matchResult.value.replace("\\/", "/")
-            if (!videoUrl.contains("googletagmanager") && !videoUrl.contains("cloudflare") && !videoUrl.contains("schema.org")) {
-                val type = if (videoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+            data.contains(".mp4") || data.contains(".ts") -> {
                 callback.invoke(
                     newExtractorLink(
                         source = name,
-                        name = "$name Stream",
-                        url = videoUrl,
-                        type = type
+                        name = "$name MP4",
+                        url = data,
+                        type = ExtractorLinkType.VIDEO
                     ) {
                         this.referer = mainUrl
                     }
                 )
+            }
+            data.contains("desihub.tv/post/") -> {
+                // Fallback check if page URL was passed
+                val document = app.get(data, headers = mainHeaders).document
+                document.select("video, source").forEach { source ->
+                    val vUrl = source.attr("src").ifBlank { source.attr("data-src") }
+                    if (vUrl.isNotBlank()) {
+                        val fixedUrl = fixUrl(vUrl)
+                        val type = if (fixedUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                        callback.invoke(
+                            newExtractorLink(name, name, fixedUrl, type) {
+                                this.referer = mainUrl
+                            }
+                        )
+                    }
+                }
+                document.select("iframe").forEach { iframe ->
+                    val iUrl = iframe.attr("src").ifBlank { iframe.attr("data-src") }
+                    if (iUrl.isNotBlank()) {
+                        loadExtractor(fixUrl(iUrl), data, subtitleCallback, callback)
+                    }
+                }
+            }
+            else -> {
+                // If it's a third-party embedded player iframe link
+                loadExtractor(data, mainUrl, subtitleCallback, callback)
             }
         }
 
