@@ -9,7 +9,7 @@ import org.jsoup.nodes.Element
 
 class Desihub : MainAPI() {
     override var mainUrl = "https://desihub.tv"
-    override var name = "Desihub"
+    override var name = "DesiHub"
     override val hasMainPage = true
     override var lang = "en"
     override val hasQuickSearch = false
