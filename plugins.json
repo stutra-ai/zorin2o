@@ -66,13 +66,13 @@
             "ByDune"
         ],
         "description": "Xbazz",
-        "fileSize": 19413,
+        "fileSize": 19530,
         "repositoryUrl": "https://github.com/stutra-ai/zorin2o",
         "language": "en",
         "tvTypes": [
             "NSFW"
         ],
         "apiVersion": 1,
-        "fileHash": "sha256-1fb8e0e3bb1f6117a5f3d784e2e10b835d2878986e53bdd1326504f815bea744"
+        "fileHash": "sha256-f96b588a54b1235e78348be59834b1ca97e20fb5b98094c155a9b5a4af1d9f9a"
     }
 ]
