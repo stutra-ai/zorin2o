@@ -70,7 +70,7 @@ class DesiHub : MainAPI() {
     }
 
     override suspend fun quickSearch(query: String): List<SearchResponse>? {
-        return search(query, 1).results
+        return search(query, 1).list
     }
 
     override suspend fun load(url: String): LoadResponse? {
