@@ -35,30 +35,11 @@ class Xbazz : MainAPI() {
             if (request.data.contains("?")) "${request.data}&page=$page" else "${request.data}?page=$page"
         }
         
-        // Use Cloudstream app.get with interceptor capability for cookies/challenges
         val document = app.get(pageUrl, headers = headers, allowRedirects = true).document
         
-        var list = document.select("div.item, article, div.video-item, div.thumb-block, div.box, .well, div.col-grid, .video-card, div.col-sm-4, div.col-md-3, div.col-lg-3").mapNotNull { element ->
+        val list = document.select("div.video-block").mapNotNull { element ->
             element.toSearchResponse()
         }.distinctBy { it.url }
-
-        if (list.isEmpty()) {
-            list = document.select("a:has(img)").mapNotNull { anchor ->
-                val href = fixUrlNull(anchor.attr("href")) ?: return@mapNotNull null
-                val fixedHref = if (href.startsWith("/")) "$mainUrl$href" else href
-                
-                val img = anchor.selectFirst("img") ?: return@mapNotNull null
-                val title = anchor.attr("title").ifEmpty { img.attr("alt").ifEmpty { anchor.text() } }.trim()
-                if (title.isEmpty() || title.length < 2) return@mapNotNull null
-
-                val rawImg = img.attr("data-src").ifEmpty { img.attr("data-lazy-src") }
-                val poster = fixUrlNull(if (rawImg.isNotEmpty()) rawImg else img.attr("src"))
-
-                newMovieSearchResponse(title, fixedHref, TvType.NSFW) {
-                    this.posterUrl = poster
-                }
-            }.distinctBy { it.url }
-        }
         
         val hasNext = document.selectFirst("a.next, .pagination-next, a:contains(Next), li.next a, a.pagi-next") != null
         return newHomePageResponse(HomePageList(request.name, list, isHorizontalImages = true), hasNext)
@@ -68,39 +49,20 @@ class Xbazz : MainAPI() {
         val searchUrl = "$mainUrl/search?q=$query"
         val document = app.get(searchUrl, headers = headers, allowRedirects = true).document
         
-        var list = document.select("div.item, article, div.video-item, div.thumb-block, div.box, .well, div.col-grid, .video-card, div.col-sm-4, div.col-md-3").mapNotNull { element ->
+        return document.select("div.video-block").mapNotNull { element ->
             element.toSearchResponse()
         }.distinctBy { it.url }
-
-        if (list.isEmpty()) {
-            list = document.select("a:has(img)").mapNotNull { anchor ->
-                val href = fixUrlNull(anchor.attr("href")) ?: return@mapNotNull null
-                val fixedHref = if (href.startsWith("/")) "$mainUrl$href" else href
-                
-                val img = anchor.selectFirst("img") ?: return@mapNotNull null
-                val title = anchor.attr("title").ifEmpty { img.attr("alt").ifEmpty { anchor.text() } }.trim()
-                if (title.isEmpty() || title.length < 2) return@mapNotNull null
-
-                val rawImg = img.attr("data-src").ifEmpty { img.attr("data-lazy-src") }
-                val poster = fixUrlNull(if (rawImg.isNotEmpty()) rawImg else img.attr("src"))
-
-                newMovieSearchResponse(title, fixedHref, TvType.NSFW) {
-                    this.posterUrl = poster
-                }
-            }.distinctBy { it.url }
-        }
-
-        return list
     }
 
     private fun Element.toSearchResponse(): SearchResponse? {
-        val anchor = this.selectFirst("a[href]") ?: return null
+        val anchor = this.selectFirst("a.thumb") ?: this.selectFirst("a[href]") ?: return null
         val href = fixUrlNull(anchor.attr("href")) ?: return null
         val fixedHref = if (href.startsWith("/")) "$mainUrl$href" else href
         
-        val imgElement = this.selectFirst("img") ?: anchor.selectFirst("img") ?: return null
-        val title = this.selectFirst(".title, .video-title, h3, h4, .card-title")?.text()?.trim()
-            ?: anchor.attr("title").ifEmpty { imgElement.attr("alt").ifEmpty { anchor.text() } }.trim()
+        val imgElement = this.selectFirst("img.video-img") ?: this.selectFirst("img") ?: return null
+        
+        val title = this.selectFirst("span.title")?.text()?.trim()
+            ?: anchor.attr("title").ifEmpty { imgElement.attr("alt") }.trim()
             
         if (title.isEmpty()) return null
 
@@ -125,7 +87,7 @@ class Xbazz : MainAPI() {
         
         val tags = document.select(".video-tags a, .categories a, .tags a").map { it.text().trim() }
         
-        val recommendations = document.select("div.item, article, div.video-item, div.thumb-block").mapNotNull { element ->
+        val recommendations = document.select("div.video-block").mapNotNull { element ->
             element.toSearchResponse()
         }.distinctBy { it.url }
 
