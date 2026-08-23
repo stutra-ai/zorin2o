@@ -69,8 +69,33 @@ class DesiHub : MainAPI() {
         return newSearchResponseList(results, hasNext = false)
     }
 
+    private fun isValidVideoUrl(url: String): Boolean {
+        if (url.isBlank()) return false
+        val cleanUrl = url.substringBefore("?").lowercase()
+        
+        if (cleanUrl.endsWith(".jpg") || cleanUrl.endsWith(".jpeg") || cleanUrl.endsWith(".png") || 
+            cleanUrl.endsWith(".webp") || cleanUrl.endsWith(".gif") || cleanUrl.endsWith(".svg") || 
+            cleanUrl.endsWith(".ico") || cleanUrl.contains("_next/image") ||
+            cleanUrl.contains("googletagmanager") || cleanUrl.contains("cloudflare") || cleanUrl.contains("schema.org")) {
+            return false
+        }
+
+        if (cleanUrl.endsWith(".m3u8") || cleanUrl.endsWith(".mp4") || cleanUrl.endsWith(".ts") || 
+            cleanUrl.contains(".m3u8") || cleanUrl.contains(".mp4")) {
+            return true
+        }
+
+        if (cleanUrl.contains("embed") || cleanUrl.contains("player") || cleanUrl.contains("iframe")) {
+            return true
+        }
+
+        return false
+    }
+
     override suspend fun load(url: String): LoadResponse {
-        val document = app.get(url, headers = mainHeaders).document
+        val res = app.get(url, headers = mainHeaders)
+        val document = res.document
+        val htmlString = res.text
 
         val title = document.selectFirst("h1")?.text()?.trim() ?: "Unknown"
         val poster = fixUrlNull(document.selectFirst("main img")?.attr("src"))
@@ -78,15 +103,26 @@ class DesiHub : MainAPI() {
 
         val videoUrls = mutableSetOf<String>()
 
-        // Exclusively target explicit video embeds (e.g., /embed/ in the iframe source)
+        // 1. Collect from explicit embedded iframe selectors (/embed/)
         document.select("iframe[src*=\"/embed/\"]").forEach { iframe ->
             val iUrl = iframe.attr("src").ifBlank { iframe.attr("data-src") }
-            if (iUrl.isNotBlank()) {
+            if (isValidVideoUrl(iUrl) && !iUrl.contains("ads") && !iUrl.contains("syndication")) {
                 videoUrls.add(fixUrl(iUrl))
             }
         }
 
-        // Fallback: If no iframe embed is found, use the page URL itself
+        // 2. Fallback check for any standard video elements
+        document.select("video").forEach { video ->
+            val vUrl = video.attr("src").ifBlank { video.attr("data-src") }
+            if (isValidVideoUrl(vUrl)) videoUrls.add(fixUrl(vUrl))
+
+            video.select("source").forEach { source ->
+                val sUrl = source.attr("src").ifBlank { source.attr("data-src") }
+                if (isValidVideoUrl(sUrl)) videoUrls.add(fixUrl(sUrl))
+            }
+        }
+
+        // Fallback: If no video URLs found, use the page URL itself
         if (videoUrls.isEmpty()) {
             videoUrls.add(url)
         }
@@ -141,7 +177,7 @@ class DesiHub : MainAPI() {
                 val document = app.get(data, headers = mainHeaders).document
                 document.select("iframe[src*=\"/embed/\"]").forEach { iframe ->
                     val iUrl = iframe.attr("src").ifBlank { iframe.attr("data-src") }
-                    if (iUrl.isNotBlank()) {
+                    if (isValidVideoUrl(iUrl)) {
                         loadExtractor(fixUrl(iUrl), data, subtitleCallback, callback)
                     }
                 }
