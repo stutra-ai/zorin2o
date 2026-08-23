@@ -3,6 +3,8 @@ package com.dune
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
+import android.util.Log
+import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
 
 class DesiHub : MainAPI() {
     override var mainUrl = "https://desihub.tv"
@@ -14,22 +16,30 @@ class DesiHub : MainAPI() {
 
     private val mainHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         "Accept-Language" to "en-US,en;q=0.9",
         "Referer" to "$mainUrl/"
     )
 
     override val mainPage = mainPageOf(
-        "$mainUrl" to "Home",
-        "$mainUrl/explore/1" to "Explore"
+        "$mainUrl/" to "Home",
+        "$mainUrl/category/desi/" to "Desi",
+        "$mainUrl/category/hindi/" to "Hindi",
+        "$mainUrl/category/indian/" to "Indian"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val document = app.get(request.data, headers = mainHeaders).document
-        
-        val items = document.select("div.grid a[href^=\"/post/\"]")
+        val url = if (page == 1) {
+            request.data
+        } else {
+            "${request.data.removeSuffix("/")}/page/$page/"
+        }
+
+        val document = app.get(url, headers = mainHeaders).document
+        val items = document.select("article, div.item, div.post")
+
         val home = items.mapNotNull { it.toSearchResponse() }
-        val hasNext = home.isNotEmpty() && page == 1
+        val hasNext = home.isNotEmpty()
 
         return newHomePageResponse(
             list = HomePageList(
@@ -42,17 +52,17 @@ class DesiHub : MainAPI() {
     }
 
     private fun Element.toSearchResponse(): SearchResponse? {
-        val href = fixUrlNull(this.attr("href")) ?: return null
-        val title = this.selectFirst("h3")?.text()?.trim() ?: return null
-        
+        val linkElement = this.selectFirst("a")
+        val href = fixUrlNull(linkElement?.attr("href")) ?: return null
+
         val imgElement = this.selectFirst("img")
-        val rawImgUrl = imgElement?.attr("src") ?: imgElement?.attr("data-src")
-        
-        val posterUrl = if (rawImgUrl?.contains("url=") == true) {
-            rawImgUrl.substringAfter("url=").substringBefore("&").replace("%3A", ":").replace("%2F", "/")
-        } else {
-            fixUrlNull(rawImgUrl)
-        }
+        val title = imgElement?.attr("alt")?.trim()?.ifBlank { null }
+            ?: linkElement?.attr("title")?.trim()?.ifBlank { null }
+            ?: linkElement?.text()?.trim()?.ifBlank { null }
+            ?: this.selectFirst("h2, h3")?.text()?.trim()
+            ?: return null
+
+        val posterUrl = fixUrlNull(imgElement?.attr("src") ?: imgElement?.attr("data-src"))
 
         return newMovieSearchResponse(title, href, TvType.NSFW) {
             this.posterUrl = posterUrl
@@ -61,98 +71,48 @@ class DesiHub : MainAPI() {
     }
 
     override suspend fun search(query: String, page: Int): SearchResponseList {
-        val url = "$mainUrl/x/$query"
+        val url = "$mainUrl/page/$page/?s=$query"
         val document = app.get(url, headers = mainHeaders).document
-        val items = document.select("div.grid a[href^=\"/post/\"]")
+        val items = document.select("article, div.item, div.post")
 
         val results = items.mapNotNull { it.toSearchResponse() }
-        return newSearchResponseList(results, hasNext = false)
+        val hasNext = results.isNotEmpty()
+
+        return newSearchResponseList(results, hasNext = hasNext)
     }
 
-    private fun isInvalidUrl(url: String): Boolean {
-        val lower = url.lowercase()
-        val path = lower.substringBefore("?") // Strips query parameters to correctly check file extensions
-        return path.contains("_next/image") || 
-               path.contains("favicon") ||
-               path.contains("logo") ||
-               path.contains("poster") ||
-               path.endsWith(".jpg") || path.endsWith(".jpeg") || 
-               path.endsWith(".png") || path.endsWith(".webp") || 
-               path.endsWith(".gif") || path.endsWith(".svg") || 
-               path.endsWith(".ico") ||
-               path.endsWith(".css") || path.endsWith(".js") ||
-               path.endsWith(".vtt") || path.endsWith(".srt")
-    }
+    override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query).list
 
     override suspend fun load(url: String): LoadResponse {
-        val res = app.get(url, headers = mainHeaders)
-        val document = res.document
-        val htmlString = res.text
+        val document = app.get(url, headers = mainHeaders).document
 
-        val title = document.selectFirst("h1")?.text()?.trim() ?: "Unknown"
-        val poster = fixUrlNull(document.selectFirst("main img")?.attr("src"))
-        val description = document.select("main p").joinToString(" ") { it.text() }
+        val title = document.selectFirst("h1.entry-title, h1")?.text()?.trim() ?: "Unknown"
+        val poster = fixUrlNull(document.selectFirst("div.entry-content img, .post-thumbnail img")?.attr("src"))
+        val description = document.select("div.entry-content p").joinToString(" ") { it.text() }.ifBlank { null }
+        
+        val tags = document.select("span.tags-links a, .tagcloud a").mapNotNull { it.text().trim() }
+        val actors = document.select(".cast-links a, .actors a").mapNotNull { Actor(it.text()) }
+        
+        val recommendations = document.select("article, div.item").mapNotNull { it.toRecommendationResult() }
 
-        val videoUrls = mutableSetOf<String>()
-
-        // 1. Collect strictly from <video> tags and their direct <source> children
-        document.select("video").forEach { video ->
-            val vUrl = video.attr("src").ifBlank { video.attr("data-src") }
-            if (vUrl.isNotBlank() && !isInvalidUrl(vUrl)) videoUrls.add(fixUrl(vUrl))
-
-            video.select("source").forEach { source ->
-                val sUrl = source.attr("src").ifBlank { source.attr("data-src") }
-                if (sUrl.isNotBlank() && !isInvalidUrl(sUrl)) videoUrls.add(fixUrl(sUrl))
-            }
-        }
-
-        // 2. Collect valid player iframes
-        document.select("iframe").forEach { iframe ->
-            val iUrl = iframe.attr("src").ifBlank { iframe.attr("data-src") }
-            if (iUrl.isNotBlank() && !isInvalidUrl(iUrl) && !iUrl.contains("ads") && !iUrl.contains("syndication")) {
-                videoUrls.add(fixUrl(iUrl))
-            }
-        }
-
-        // 3. Regex scan for m3u8/mp4/ts streams hidden in scripts/payload
-        val videoUrlRegex = "https?://[^\\s\"']+?\\.(?:m3u8|mp4|ts)(?:\\?[^\\s\"']*)?".toRegex()
-        videoUrlRegex.findAll(htmlString).forEach { matchResult ->
-            val vUrl = matchResult.value.replace("\\/", "/")
-            if (!vUrl.contains("googletagmanager") && 
-                !vUrl.contains("cloudflare") && 
-                !vUrl.contains("schema.org") && 
-                !isInvalidUrl(vUrl)) {
-                videoUrls.add(vUrl)
-            }
-        }
-
-        // Fallback: If no specific video links found, store the page URL itself
-        if (videoUrls.isEmpty()) {
-            videoUrls.add(url)
-        }
-
-        // If there is only 1 valid media link, return as a Movie response (plays directly without episode screen)
-        if (videoUrls.size == 1) {
-            return newMovieLoadResponse(title, url, TvType.NSFW, videoUrls.first()) {
-                this.posterUrl = poster
-                this.posterHeaders = mainHeaders
-                this.plot = description
-            }
-        }
-
-        // Otherwise, return as a TvSeries only when multiple actual parts/videos exist
-        val episodes = videoUrls.mapIndexed { index, vUrl ->
-            newEpisode(vUrl) {
-                name = "Part ${index + 1}"
-                season = 1
-                episode = index + 1
-            }
-        }
-
-        return newTvSeriesLoadResponse(title, url, TvType.NSFW, episodes) {
+        return newMovieLoadResponse(title, url, TvType.NSFW, url) {
             this.posterUrl = poster
             this.posterHeaders = mainHeaders
             this.plot = description
+            this.tags = tags
+            this.recommendations = recommendations
+            addActors(actors)
+        }
+    }
+
+    private fun Element.toRecommendationResult(): SearchResponse? {
+        val title = this.selectFirst("img")?.attr("alt")?.trim() ?: return null
+        val href = fixUrlNull(this.selectFirst("a")?.attr("href")) ?: return null
+        val posterUrl = fixUrlNull(this.selectFirst("img")?.attr("src"))
+
+        return newMovieSearchResponse(title, href, TvType.NSFW) {
+            this.posterUrl = posterUrl
+            this.posterHeaders = mainHeaders
         }
     }
 
@@ -162,67 +122,33 @@ class DesiHub : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        when {
-            data.contains(".m3u8") -> {
-                callback.invoke(
-                    newExtractorLink(
-                        source = name,
-                        name = "$name HLS",
-                        url = data,
-                        type = ExtractorLinkType.M3U8
-                    ) {
-                        this.referer = mainUrl
-                    }
-                )
-            }
-            data.contains(".mp4") || data.contains(".ts") -> {
-                callback.invoke(
-                    newExtractorLink(
-                        source = name,
-                        name = "$name MP4",
-                        url = data,
-                        type = ExtractorLinkType.VIDEO
-                    ) {
-                        this.referer = mainUrl
-                    }
-                )
-            }
-            data.contains("desihub.tv/post/") -> {
-                val document = app.get(data, headers = mainHeaders).document
-                document.select("video").forEach { video ->
-                    val vUrl = video.attr("src").ifBlank { video.attr("data-src") }
-                    if (vUrl.isNotBlank() && !isInvalidUrl(vUrl)) {
-                        val fixedUrl = fixUrl(vUrl)
-                        val type = if (fixedUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                        callback.invoke(
-                            newExtractorLink(name, name, fixedUrl, type) {
-                                this.referer = mainUrl
-                            }
-                        )
-                    }
-                    video.select("source").forEach { source ->
-                        val sUrl = source.attr("src").ifBlank { source.attr("data-src") }
-                        if (sUrl.isNotBlank() && !isInvalidUrl(sUrl)) {
-                            val fixedUrl = fixUrl(sUrl)
-                            val type = if (fixedUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                            callback.invoke(
-                                newExtractorLink(name, name, fixedUrl, type) {
-                                    this.referer = mainUrl
-                                }
-                            )
-                        }
-                    }
+        val document = app.get(data, headers = mainHeaders).document
+        
+        // Handle pages with multiple or single iframe video embeds
+        val iframes = document.select("iframe")
+        for ((index, iframe) in iframes.withIndex()) {
+            val src = iframe.attr("src").ifBlank { iframe.attr("data-src") }
+            if (src.isBlank()) continue
+            
+            val fixedSrc = fixUrl(src)
+            loadExtractor(fixedSrc, data, subtitleCallback, callback)
+        }
+
+        // Handle direct video source tags if present on the page
+        val videoSources = document.select("video source, source")
+        for ((index, source) in videoSources.withIndex()) {
+            val src = source.attr("src")
+            if (src.isBlank()) continue
+            callback.invoke(
+                newExtractorLink(
+                    source = name,
+                    name = "Direct ${index + 1}",
+                    url = src,
+                    type = ExtractorLinkType.VIDEO
+                ) {
+                    this.referer = mainUrl
                 }
-                document.select("iframe").forEach { iframe ->
-                    val iUrl = iframe.attr("src").ifBlank { iframe.attr("data-src") }
-                    if (iUrl.isNotBlank() && !isInvalidUrl(iUrl)) {
-                        loadExtractor(fixUrl(iUrl), data, subtitleCallback, callback)
-                    }
-                }
-            }
-            else -> {
-                loadExtractor(data, mainUrl, subtitleCallback, callback)
-            }
+            )
         }
 
         return true
