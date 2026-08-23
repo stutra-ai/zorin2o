@@ -31,7 +31,6 @@ class DesiHub : MainAPI() {
             if (request.data.contains("?")) "${request.data}&page=$page" else "${request.data}?page=$page"
         }
         
-        // Fetch using AJAX headers to capture dynamically rendered or async-loaded grids
         val document = app.get(pageUrl, headers = ajaxHeaders).document
         
         val list = document.select("div.video-card, article.item, div.item, .list-videos .item, article, div.box").mapNotNull { element ->
@@ -71,7 +70,7 @@ class DesiHub : MainAPI() {
     }
 
     override suspend fun quickSearch(query: String): List<SearchResponse>? {
-        return search(query, 1).list
+        return search(query, 1).results
     }
 
     override suspend fun load(url: String): LoadResponse? {
@@ -131,10 +130,8 @@ class DesiHub : MainAPI() {
                     )
                     foundAny = true
                 } else {
-                    safeApiCall {
-                        loadExtractor(fixedUrl, "$mainUrl/", subtitleCallback, callback)
-                        foundAny = true
-                    }
+                    loadExtractor(fixedUrl, "$mainUrl/", subtitleCallback, callback)
+                    foundAny = true
                 }
             }
         }
