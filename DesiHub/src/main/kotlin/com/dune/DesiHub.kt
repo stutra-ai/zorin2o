@@ -33,7 +33,8 @@ class DesiHub : MainAPI() {
         
         val document = app.get(pageUrl, headers = ajaxHeaders).document
         
-        val list = document.select("div.video-card, article.item, div.item, .list-videos .item, article, div.box").mapNotNull { element ->
+        // Removed broad "article" and "div.box" containers to prevent capturing parent wrappers
+        val list = document.select("div.video-card, article.item, div.item, .list-videos .item").mapNotNull { element ->
             element.toSearchResponse()
         }.distinctBy { it.url }
         
@@ -45,7 +46,7 @@ class DesiHub : MainAPI() {
         val searchUrl = "$mainUrl/search?q=$query"
         val document = app.get(searchUrl, headers = ajaxHeaders).document
         
-        return document.select("div.video-card, article.item, div.item, .list-videos .item, article, div.box").mapNotNull { element ->
+        return document.select("div.video-card, article.item, div.item, .list-videos .item").mapNotNull { element ->
             element.toSearchResponse()
         }.distinctBy { it.url }
     }
@@ -105,7 +106,6 @@ class DesiHub : MainAPI() {
         val document = app.get(data, headers = ajaxHeaders).document
         var foundAny = false
 
-        // 1. Check standard tags (iframe, source, video elements)
         val elements = document.select("iframe, source, video, .player-container iframe, .embed-responsive iframe")
         elements.forEachIndexed { index, element ->
             val src = element.attr("src").ifEmpty { element.attr("data-src") }
@@ -127,14 +127,12 @@ class DesiHub : MainAPI() {
                     )
                     foundAny = true
                 } else {
-                    // Correct handling of suspending extractor loading within coroutine flow
                     loadExtractor(fixedUrl, "$mainUrl/", subtitleCallback, callback)
                     foundAny = true
                 }
             }
         }
 
-        // 2. Fallback: Parse inline JavaScript configuration blocks or script tags for raw video URLs
         val scriptContent = document.select("script").html()
         val urlRegex = "(https?://[^\\s\"']+\\.(?:mp4|m3u8)[^\\s\"']*)".toRegex()
         
