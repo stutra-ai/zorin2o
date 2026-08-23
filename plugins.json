@@ -55,5 +55,24 @@
         ],
         "apiVersion": 1,
         "fileHash": "sha256-63eb66431d50525e9f01eb03e13f21642ee1782e1b4ad4fb25469e3fe0fc5f88"
+    },
+    {
+        "url": "https://raw.githubusercontent.com/stutra-ai/zorin2o/builds/Xbazz.cs3",
+        "status": 1,
+        "version": 1,
+        "name": "Xbazz",
+        "internalName": "Xbazz",
+        "authors": [
+            "ByDune"
+        ],
+        "description": "Xbazz",
+        "fileSize": 17459,
+        "repositoryUrl": "https://github.com/stutra-ai/zorin2o",
+        "language": "en",
+        "tvTypes": [
+            "NSFW"
+        ],
+        "apiVersion": 1,
+        "fileHash": "sha256-6bcbdb99035c71c99163d42e0d5e5f98095244ab8254bf4a15efdfe7f4c5bddd"
     }
 ]
