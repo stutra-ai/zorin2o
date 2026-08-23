@@ -71,12 +71,17 @@ class DesiHub : MainAPI() {
 
     private fun isInvalidUrl(url: String): Boolean {
         val lower = url.lowercase()
-        return lower.contains("_next/image") || 
-               lower.contains("favicon") ||
-               lower.endsWith(".jpg") || lower.endsWith(".jpeg") || 
-               lower.endsWith(".png") || lower.endsWith(".webp") || 
-               lower.endsWith(".gif") || lower.endsWith(".svg") || 
-               lower.endsWith(".ico")
+        val path = lower.substringBefore("?") // Strips query parameters to correctly check file extensions
+        return path.contains("_next/image") || 
+               path.contains("favicon") ||
+               path.contains("logo") ||
+               path.contains("poster") ||
+               path.endsWith(".jpg") || path.endsWith(".jpeg") || 
+               path.endsWith(".png") || path.endsWith(".webp") || 
+               path.endsWith(".gif") || path.endsWith(".svg") || 
+               path.endsWith(".ico") ||
+               path.endsWith(".css") || path.endsWith(".js") ||
+               path.endsWith(".vtt") || path.endsWith(".srt")
     }
 
     override suspend fun load(url: String): LoadResponse {
@@ -126,7 +131,7 @@ class DesiHub : MainAPI() {
             videoUrls.add(url)
         }
 
-        // If there is only 1 video link, return it as a Movie load response (bypasses episode screen)
+        // If there is only 1 valid media link, return as a Movie response (plays directly without episode screen)
         if (videoUrls.size == 1) {
             return newMovieLoadResponse(title, url, TvType.NSFW, videoUrls.first()) {
                 this.posterUrl = poster
@@ -135,7 +140,7 @@ class DesiHub : MainAPI() {
             }
         }
 
-        // Otherwise, return as a TvSeries if there are multiple parts/videos
+        // Otherwise, return as a TvSeries only when multiple actual parts/videos exist
         val episodes = videoUrls.mapIndexed { index, vUrl ->
             newEpisode(vUrl) {
                 name = "Part ${index + 1}"
