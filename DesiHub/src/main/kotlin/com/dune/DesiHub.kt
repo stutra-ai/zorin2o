@@ -76,38 +76,24 @@ class DesiHub : MainAPI() {
         val poster = fixUrlNull(document.selectFirst("main img")?.attr("src"))
         val description = document.select("main p").joinToString(" ") { it.text() }
 
-        val videoSources = mutableListOf<String>()
+        val videoUrls = mutableSetOf<String>()
 
-        // 1. Target direct HTML5 video elements and source tags inside video containers
-        document.select("video, video source, div.player source").forEach { element ->
-            val src = element.attr("src").ifBlank { element.attr("data-src") }
-            if (src.isNotBlank() && !videoSources.contains(src)) {
-                videoSources.add(fixUrl(src))
+        // Exclusively target explicit video embeds (e.g., /embed/ in the iframe source)
+        document.select("iframe[src*=\"/embed/\"]").forEach { iframe ->
+            val iUrl = iframe.attr("src").ifBlank { iframe.attr("data-src") }
+            if (iUrl.isNotBlank()) {
+                videoUrls.add(fixUrl(iUrl))
             }
         }
 
-        // 2. Target valid player iframes (excluding ads, trackers, or general UI widgets)
-        document.select("iframe").forEach { iframe ->
-            val src = iframe.attr("src").ifBlank { iframe.attr("data-src") }
-            if (src.isNotBlank() && 
-                !src.contains("googletagmanager") && 
-                !src.contains("cloudflare") && 
-                !src.contains("ads") && 
-                !src.contains("syndication") &&
-                !videoSources.contains(src)) {
-                videoSources.add(fixUrl(src))
-            }
+        // Fallback: If no iframe embed is found, use the page URL itself
+        if (videoUrls.isEmpty()) {
+            videoUrls.add(url)
         }
 
-        // Fallback: If no explicit video tags or iframes are found, pass the post URL itself
-        if (videoSources.isEmpty()) {
-            videoSources.add(url)
-        }
-
-        // Map each valid source/iframe strictly to an Episode item
-        val episodes = videoSources.mapIndexed { index, sourceUrl ->
-            newEpisode(sourceUrl) {
-                name = if (videoSources.size == 1) "Full Video" else "Source ${index + 1}"
+        val episodes = videoUrls.mapIndexed { index, vUrl ->
+            newEpisode(vUrl) {
+                name = if (videoUrls.size == 1) "Full Video" else "Part ${index + 1}"
                 season = 1
                 episode = index + 1
             }
@@ -152,31 +138,15 @@ class DesiHub : MainAPI() {
                 )
             }
             data.contains("desihub.tv/post/") -> {
-                // If fallback page URL was passed, re-scrape inline players
                 val document = app.get(data, headers = mainHeaders).document
-                
-                document.select("video, source").forEach { source ->
-                    val vUrl = source.attr("src").ifBlank { source.attr("data-src") }
-                    if (vUrl.isNotBlank()) {
-                        val fixedUrl = fixUrl(vUrl)
-                        val type = if (fixedUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                        callback.invoke(
-                            newExtractorLink(name, name, fixedUrl, type) {
-                                this.referer = mainUrl
-                            }
-                        )
-                    }
-                }
-                
-                document.select("iframe").forEach { iframe ->
+                document.select("iframe[src*=\"/embed/\"]").forEach { iframe ->
                     val iUrl = iframe.attr("src").ifBlank { iframe.attr("data-src") }
-                    if (iUrl.isNotBlank() && !iUrl.contains("ads")) {
+                    if (iUrl.isNotBlank()) {
                         loadExtractor(fixUrl(iUrl), data, subtitleCallback, callback)
                     }
                 }
             }
             else -> {
-                // Standard third-party extractor link handling for embedded players
                 loadExtractor(data, mainUrl, subtitleCallback, callback)
             }
         }
