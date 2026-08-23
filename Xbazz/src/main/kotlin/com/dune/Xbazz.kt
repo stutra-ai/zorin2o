@@ -3,18 +3,27 @@ package com.dune
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
+import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
+import com.lagradost.cloudstream3.plugins.Plugin
+import android.content.Context
 import org.jsoup.nodes.Element
 
-class Xbaaz : MainAPI() {
+@CloudstreamPlugin
+class XbazzPlugin : Plugin() {
+    override fun load(context: Context) {
+        registerMainAPI(Xbazz())
+    }
+}
+
+class Xbazz : MainAPI() {
     override var mainUrl = "https://xbaaz.com"
-    override var name = "Xbaaz"
+    override var name = "Xbazz"
     override val hasMainPage = true
     override var lang = "en"
     override val hasQuickSearch = false
     override val supportedTypes = setOf(TvType.NSFW)
     override val vpnStatus = VPNStatus.MightBeNeeded
 
-    // Cloudflare-resistant headers mimicking a standard modern desktop browser
     private val headers = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
@@ -75,9 +84,9 @@ class Xbaaz : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         val document = app.get(url, headers = headers).document
         
-        val title = document.selectFirst("h1.title, h1.video-title, h1")?.text()?.trim() ?: "Xbaaz Video"
+        val title = document.selectFirst("h1.title, h1.video-title, h1")?.text()?.trim() ?: "Xbazz Video"
         val poster = fixUrlNull(document.selectFirst("meta[property=\"og:image\"]")?.attr("content"))
-        val description = document.selectFirst("meta[property=\"og:description\"]")?.attr("content")?.trim()
+        val description = document.selectFirst("meta[property=\"og:description\"]")?.attr("content"]?.trim()
         
         val tags = document.select(".video-tags a, .categories a, .tags a").map { it.text().trim() }
         
@@ -89,7 +98,6 @@ class Xbaaz : MainAPI() {
             Actor(it.text().trim(), null) 
         }
 
-        // Check for multiple parts/episodes if available
         val episodes = mutableListOf<Episode>()
         val playlistElements = document.select(".playlist-item, .part-item, .episodes-list a, .video-parts a")
         
@@ -108,7 +116,6 @@ class Xbaaz : MainAPI() {
             }
         }
 
-        // Return as a TV Series if multiple parts exist, otherwise as a standard Movie view
         return if (episodes.size > 1) {
             newTvSeriesLoadResponse(title, url, TvType.NSFW, episodes) {
                 this.posterUrl = poster
@@ -152,7 +159,6 @@ class Xbaaz : MainAPI() {
         val document = app.get(data, headers = headers).document
         var foundAny = false
 
-        // Extract iframes or embedded video sources
         val elements = document.select("iframe, source, video, .player-container iframe, .embed-responsive iframe")
         elements.forEachIndexed { index, element ->
             val src = element.attr("src").ifEmpty { element.attr("data-src") }
@@ -180,7 +186,6 @@ class Xbaaz : MainAPI() {
             }
         }
 
-        // Script configuration fallback regex matcher for direct stream links
         val scriptContent = document.select("script").html()
         val urlRegex = "(https?://[^\\s\"']+\\.(?:mp4|m3u8)[^\\s\"']*)".toRegex()
         
