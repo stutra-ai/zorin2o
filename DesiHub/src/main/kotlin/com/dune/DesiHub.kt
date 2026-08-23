@@ -75,7 +75,7 @@ class DesiHub : MainAPI() {
         
         val title = document.selectFirst("h1.title, h1.video-title, h1")?.text()?.trim() ?: "DesiHub Video"
         val poster = fixUrlNull(document.selectFirst("meta[property=\"og:image\"]")?.attr("content"))
-        val description = document.selectFirst("meta[property=\"og:description\"]")?.attr("content"]?.trim()
+        val description = document.selectFirst("meta[property=\"og:description\"]")?.attr("content")?.trim()
         
         val tags = document.select(".video-tags a, .categories a, .tags a").map { it.text().trim() }
         
