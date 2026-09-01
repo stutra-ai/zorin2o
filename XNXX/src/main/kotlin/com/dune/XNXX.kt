@@ -5,12 +5,12 @@ import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
 import android.util.Log
 
-class XNXX : MainAPI() {
+class Xnxx : MainAPI() {
     override var mainUrl = "https://www.xnxx.com"
     override var name = "XNXX"
     override val hasMainPage = true
     override var lang = "en"
-    override val hasQuickSearch = true
+    override val hasQuickSearch = false
     override val supportedTypes = setOf(TvType.NSFW)
 
     private val mainHeaders = mapOf(
@@ -65,20 +65,12 @@ class XNXX : MainAPI() {
         }
     }
 
-    override suspend fun search(query: String, page: Int): List<SearchResponse> {
-        val url = "$mainUrl/search/$query/$page"
+    override suspend fun search(query: String): List<SearchResponse>? {
+        val url = "$mainUrl/search/$query/1"
         val document = app.get(url, headers = mainHeaders).document
         val items = document.select("div.mozaique div.thumb-block")
 
         return items.mapNotNull { it.toSearchResponse() }
-    }
-
-    override suspend fun search(query: String): List<SearchResponse> {
-        return search(query, 1)
-    }
-
-    override suspend fun quickSearch(query: String): List<SearchResponse>? {
-        return search(query, 1)
     }
 
     override suspend fun load(url: String): LoadResponse {
