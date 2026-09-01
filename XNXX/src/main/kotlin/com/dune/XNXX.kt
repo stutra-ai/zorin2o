@@ -21,22 +21,21 @@ class XNXX : MainAPI() {
     )
 
     override val mainPage = mainPageOf(
-        "$mainUrl/home/" to "Home",
-        "$mainUrl/best/" to "Best",
-        "$mainUrl/new/" to "New",
-        "$mainUrl/search/amateur" to "Amateur",
-        "$mainUrl/search/hd" to "HD"
+        "$mainUrl/" to "Home",
+        "$mainUrl/search/cute" to "Cute"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = if (page == 1) {
             request.data
         } else {
-            "${request.data.removeSuffix("/")}/${page}/"
+            val base = request.data.removeSuffix("/")
+            "$base/$page"
         }
 
         val document = app.get(url, headers = mainHeaders).document
-        val items = document.select("div.mozaique div.thumb-block")
+        // Comprehensive selectors to target video cards layout on XNXX
+        val items = document.select("div.mozaique div.thumb-block, div.thumb-block, .magnum-block")
 
         val home = items.mapNotNull { it.toSearchResponse() }
         val hasNext = home.isNotEmpty()
@@ -52,12 +51,21 @@ class XNXX : MainAPI() {
     }
 
     private fun Element.toSearchResponse(): SearchResponse? {
-        val titleElement = this.selectFirst("p.title a") ?: return null
+        val titleElement = this.selectFirst("p.title a") 
+            ?: this.selectFirst("a.title") 
+            ?: this.selectFirst("a[title]") 
+            ?: return null
+
         val title = titleElement.attr("title").trim().ifBlank { titleElement.text().trim() }
-        val href = fixUrlNull(titleElement.attr("href"))?.let { "$mainUrl$it" } ?: return null
+        if (title.isBlank()) return null
+        
+        val rawHref = titleElement.attr("href")
+        val href = fixUrlNull(if (rawHref.startsWith("http")) rawHref else "$mainUrl$rawHref") ?: return null
 
         val imgElement = this.selectFirst("img")
-        val posterUrl = imgElement?.attr("data-src") ?: imgElement?.attr("src")
+        val posterUrl = imgElement?.attr("data-src") 
+            ?: imgElement?.attr("src") 
+            ?: imgElement?.attr("data-original")
 
         return newMovieSearchResponse(title, href, TvType.NSFW) {
             this.posterUrl = posterUrl
@@ -65,12 +73,15 @@ class XNXX : MainAPI() {
         }
     }
 
-    override suspend fun search(query: String): List<SearchResponse>? {
-        val url = "$mainUrl/search/$query/1"
+    override suspend fun search(query: String, page: Int): SearchResponseList? {
+        val url = "$mainUrl/search/$query/$page"
         val document = app.get(url, headers = mainHeaders).document
-        val items = document.select("div.mozaique div.thumb-block")
+        val items = document.select("div.mozaique div.thumb-block, div.thumb-block")
 
-        return items.mapNotNull { it.toSearchResponse() }
+        val results = items.mapNotNull { it.toSearchResponse() }
+        val hasNext = results.isNotEmpty()
+
+        return newSearchResponseList(results, hasNext = hasNext)
     }
 
     override suspend fun load(url: String): LoadResponse {
@@ -83,7 +94,7 @@ class XNXX : MainAPI() {
         val poster = document.selectFirst("meta[property='og:image']")?.attr("content")
         val description = document.selectFirst("meta[property='og:description']")?.attr("content") ?: ""
         
-        val tags = document.select("span.metadata-row.tags a").mapNotNull { it.text().trim() }
+        val tags = document.select("span.metadata-row.tags a, .video-metadata .tag").mapNotNull { it.text().trim() }
 
         return newMovieLoadResponse(title, url, TvType.NSFW, url) {
             this.posterUrl = poster
@@ -102,6 +113,7 @@ class XNXX : MainAPI() {
         val res = app.get(data, headers = mainHeaders)
         val html = res.text
 
+        // Parse native video links embedded inside the XNXX JavaScript player variables
         val highQualRegex = Regex("setVideoUrlHigh\\s*\\(\\s*['\"]([^'\"]+)['\"]\\s*\\)")
         val lowQualRegex = Regex("setVideoUrlLow\\s*\\(\\s*['\"]([^'\"]+)['\"]\\s*\\)")
         val lowQualAltRegex = Regex("setVideoUrlVLow\\s*\\(\\s*['\"]([^'\"]+)['\"]\\s*\\)")
