@@ -74,5 +74,24 @@
         ],
         "apiVersion": 1,
         "fileHash": "sha256-69b3dd75ecf5a84e4202a58829d141cacf1e7e27c30f87c5ad216bf1532393a8"
+    },
+    {
+        "url": "https://raw.githubusercontent.com/stutra-ai/zorin2o/builds/XNXX.cs3",
+        "status": 1,
+        "version": 1,
+        "name": "XNXX",
+        "internalName": "XNXX",
+        "authors": [
+            "ByDune"
+        ],
+        "description": "XNXX",
+        "fileSize": 11836,
+        "repositoryUrl": "https://github.com/stutra-ai/zorin2o",
+        "language": "en",
+        "tvTypes": [
+            "NSFW"
+        ],
+        "apiVersion": 1,
+        "fileHash": "sha256-fe7a540048dbd75501a0eced3d289cfc464b5f31bb53b4385345cd1789c03be6"
     }
 ]
