@@ -103,8 +103,8 @@ class XNXX : MainAPI() {
         
         val tags = document.select("span.metadata-row.tags a, .video-metadata .tag").mapNotNull { it.text().trim() }
 
-        // Extract recommendations and filter out the current video URL to prevent self-reference loops
-        val recommendations = document.select("div.thumb-block")
+        // Updated recommendation selector to target XNXX watch-page recommendation layouts properly
+        val recommendations = document.select("#dl_related div.thumb-block, .thumb-block, div.mozaique div.thumb-block")
             .mapNotNull { it.toRecommendationResult() }
             .filter { it.url != url }
             .distinctBy { it.url }
