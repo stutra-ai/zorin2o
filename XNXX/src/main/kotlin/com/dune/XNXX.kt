@@ -4,15 +4,13 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
 import android.util.Log
-import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
-import org.jsoup.Jsoup
 
 class XNXX : MainAPI() {
     override var mainUrl = "https://www.xnxx.com"
     override var name = "XNXX"
     override val hasMainPage = true
     override var lang = "en"
-    override val hasQuickSearch = false
+    override val hasQuickSearch = true
     override val supportedTypes = setOf(TvType.NSFW)
 
     private val mainHeaders = mapOf(
@@ -31,7 +29,6 @@ class XNXX : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // XNXX pagination format: /home/2 or /best/2
         val url = if (page == 1) {
             request.data
         } else {
@@ -68,18 +65,21 @@ class XNXX : MainAPI() {
         }
     }
 
-    override suspend fun search(query: String, page: Int): SearchResponseList {
+    override suspend fun search(query: String, page: Int): List<SearchResponse> {
         val url = "$mainUrl/search/$query/$page"
         val document = app.get(url, headers = mainHeaders).document
         val items = document.select("div.mozaique div.thumb-block")
 
-        val results = items.mapNotNull { it.toSearchResponse() }
-        val hasNext = results.isNotEmpty()
-
-        return newSearchResponseList(results, hasNext = hasNext)
+        return items.mapNotNull { it.toSearchResponse() }
     }
 
-    override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query).results
+    override suspend fun search(query: String): List<SearchResponse> {
+        return search(query, 1)
+    }
+
+    override suspend fun quickSearch(query: String): List<SearchResponse>? {
+        return search(query, 1)
+    }
 
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url, headers = mainHeaders).document
@@ -91,7 +91,6 @@ class XNXX : MainAPI() {
         val poster = document.selectFirst("meta[property='og:image']")?.attr("content")
         val description = document.selectFirst("meta[property='og:description']")?.attr("content") ?: ""
         
-        // Extract tags/categories
         val tags = document.select("span.metadata-row.tags a").mapNotNull { it.text().trim() }
 
         return newMovieLoadResponse(title, url, TvType.NSFW, url) {
@@ -111,9 +110,6 @@ class XNXX : MainAPI() {
         val res = app.get(data, headers = mainHeaders)
         val html = res.text
 
-        // XNXX embeds direct video source links inside JavaScript variables on the watch page
-        // Patterns typically look like: html5player.setVideoUrlHigh('...') or setVideoUrlLow('...')
-        
         val highQualRegex = Regex("setVideoUrlHigh\\s*\\(\\s*['\"]([^'\"]+)['\"]\\s*\\)")
         val lowQualRegex = Regex("setVideoUrlLow\\s*\\(\\s*['\"]([^'\"]+)['\"]\\s*\\)")
         val lowQualAltRegex = Regex("setVideoUrlVLow\\s*\\(\\s*['\"]([^'\"]+)['\"]\\s*\\)")
