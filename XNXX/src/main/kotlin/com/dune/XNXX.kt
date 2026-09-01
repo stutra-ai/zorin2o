@@ -3,7 +3,15 @@ package com.dune
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
-import android.util.Log
+import com.fasterxml.jackson.annotation.JsonProperty
+import org.jsoup.parser.Parser
+
+private data class RelatedItemParse(
+    @JsonProperty("u") val u: String?,
+    @JsonProperty("i") val i: String?,
+    @JsonProperty("tf") val tf: String?,
+    @JsonProperty("d") val d: String?
+)
 
 class XNXX : MainAPI() {
     override var mainUrl = "https://www.xnxx.com"
@@ -59,7 +67,8 @@ class XNXX : MainAPI() {
             ?: this.selectFirst("a") 
             ?: return null
 
-        val title = titleElement.attr("title").ifBlank { titleElement.text() }.trim()
+        val rawTitle = titleElement.attr("title").ifBlank { titleElement.text() }
+        val title = Parser.unescapeEntities(rawTitle, false).trim()
         if (title.isBlank()) return null
         
         val rawHref = titleElement.attr("href")
@@ -103,11 +112,40 @@ class XNXX : MainAPI() {
         
         val tags = document.select("span.metadata-row.tags a, .video-metadata .tag").mapNotNull { it.text().trim() }
 
-        // Updated recommendation selector to target XNXX watch-page recommendation layouts properly
-        val recommendations = document.select("#dl_related div.thumb-block, .thumb-block, div.mozaique div.thumb-block")
-            .mapNotNull { it.toRecommendationResult() }
-            .filter { it.url != url }
-            .distinctBy { it.url }
+        // Extract recommendations cleanly from embedded video_related JSON script block
+        val recommendations = ArrayList<SearchResponse>()
+        val relatedScript = document.select("script:containsData(var video_related)")
+        if (relatedScript.isNotEmpty()) {
+            val scriptContentRelated = relatedScript.html()
+            val jsonRegexRelated = Regex("""var video_related\s*=\s*(\[(?:.|\n)*?\])\s*;""")
+            val matchRelated = jsonRegexRelated.find(scriptContentRelated)
+            if (matchRelated != null && matchRelated.groupValues.size > 1) {
+                val jsonArrayStringRelated = matchRelated.groupValues[1]
+                try {
+                    val relatedItems = AppUtils.parseJson<List<RelatedItemParse>>(jsonArrayStringRelated)
+                    relatedItems.forEach { related ->
+                        val relatedTitle = related.tf?.let { Parser.unescapeEntities(it, false) }
+                        if (related.u != null && relatedTitle != null) {
+                            val cleanRelatedHrefPath = related.u
+                            val finalRelatedUrl = if (cleanRelatedHrefPath.startsWith("http")) cleanRelatedHrefPath else "$mainUrl$cleanRelatedHrefPath"
+                            
+                            recommendations.add(
+                                newMovieSearchResponse(
+                                    name = relatedTitle,
+                                    url = finalRelatedUrl,
+                                    type = TvType.NSFW
+                                ) {
+                                    this.posterUrl = related.i?.let { if (it.startsWith("//")) "https:$it" else it }
+                                    this.posterHeaders = mainHeaders
+                                }
+                            )
+                        }
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
 
         return newMovieLoadResponse(title, url, TvType.NSFW, url) {
             this.posterUrl = poster
@@ -115,34 +153,6 @@ class XNXX : MainAPI() {
             this.plot = description
             this.tags = tags
             this.recommendations = recommendations
-        }
-    }
-
-    private fun Element.toRecommendationResult(): SearchResponse? {
-        val titleElement = this.selectFirst("p.title a") 
-            ?: this.selectFirst("a.title") 
-            ?: this.selectFirst("a[title]") 
-            ?: this.selectFirst("a") 
-            ?: return null
-
-        val title = titleElement.attr("title").ifBlank { titleElement.text() }.trim()
-        if (title.isBlank()) return null
-
-        val rawHref = titleElement.attr("href")
-        if (rawHref.isBlank()) return null
-        val href = if (rawHref.startsWith("http")) rawHref else "$mainUrl$rawHref"
-
-        val imgElement = this.selectFirst("img")
-        val posterUrl = fixUrlNull(
-            imgElement?.attr("data-src") 
-                ?: imgElement?.attr("src") 
-                ?: imgElement?.attr("data-original")
-                ?: imgElement?.attr("data-lazy-src")
-        )
-
-        return newMovieSearchResponse(title, href, TvType.NSFW) {
-            this.posterUrl = posterUrl
-            this.posterHeaders = mainHeaders
         }
     }
 
