@@ -20,7 +20,7 @@ class XNXX : MainAPI() {
         "$mainUrl/search/deepthroat?top" to "Deepthroat",
         "$mainUrl/search/deep+throat?top" to "Deep Throat",
         "$mainUrl/search/rough?top" to "Rough",
-        "$mainUrl/search/cum+in+mouth?top" to "Cum in mouth"
+        "$mainUrl/search/cum+in+mouth?top" to "Cum in mouth",
         "$mainUrl/search/cum+inside?top" to "Cum Inside",
         "$mainUrl/search/girlfriend?top" to "Girlfriend",
         "$mainUrl/search/arab" to "Arab",
@@ -79,8 +79,7 @@ class XNXX : MainAPI() {
         "$mainUrl/search/cougar?top" to "Cougar"        
     )
 
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // XNXX pagination format: /m/ - e.g., root is page 1, page 2 is /2 etc. depending on route structure, or standard query appending
+override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val pageNum = if (page <= 1) "" else "$page/"
         val url = if (page <= 1) request.data else "${request.data.removeSuffix("/")}/$pageNum"
         
@@ -116,7 +115,7 @@ class XNXX : MainAPI() {
         }
     }
 
-    override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query).list
+    override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query, 1).list
 
     override suspend fun load(url: String): LoadResponse? {
         val document = app.get(url).document
@@ -130,7 +129,7 @@ class XNXX : MainAPI() {
         val tags = document.select("span.metadata-row.tags a.tag").map { it.text() }
         val description = document.selectFirst("meta[property=og:description]")?.attr("content")?.trim()
         
-        val recommendations = document.select("div#related-video-container div.thumb-block").mapNotNull { it.toRecommendationResult() }
+        val recommendations = document.select("div#related-video-container div.thumb-block").mapNotNull { toRecommendationResult() }
         val actors = document.select("span.metadata-row.pornstars a").map { Actor(it.text()) }
 
         return newMovieLoadResponse(title, url, TvType.NSFW, url) {
@@ -167,8 +166,6 @@ class XNXX : MainAPI() {
         try {
             val html = app.get(url).text
 
-            // XNXX embeds video sources directly inside Javascript variables in the page source code
-            // Patterns typically match: html5player.setVideoUrlLow('...'), html5player.setVideoUrlHigh('...') or setVideoHLS(...)
             val lowUrl = html5Regex("setVideoUrlLow", html)
             val highUrl = html5Regex("setVideoUrlHigh", html)
             val hlsUrl = html5Regex("setVideoHLS", html)
