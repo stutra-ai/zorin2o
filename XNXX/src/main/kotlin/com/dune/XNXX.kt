@@ -5,7 +5,7 @@ import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
 import android.util.Log
 
-class Xnxx : MainAPI() {
+class XNXX : MainAPI() {
     override var mainUrl = "https://www.xnxx.com"
     override var name = "XNXX"
     override val hasMainPage = true
