@@ -5,7 +5,7 @@ import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
 import android.util.Log
 
-class XNXX : MainAPI() {
+class Xnxx : MainAPI() {
     override var mainUrl = "https://www.xnxx.com"
     override var name = "XNXX"
     override val hasMainPage = true
@@ -21,69 +21,11 @@ class XNXX : MainAPI() {
     )
 
     override val mainPage = mainPageOf(
-        "$mainUrl/todays-selection" to "Today's selection",
-        "$mainUrl/search/familial_relations" to "Family",
-        "$mainUrl/search/big_tits" to "Big Tits",
-        "$mainUrl/search/deepthroat?top" to "Deepthroat",
-        "$mainUrl/search/deep+throat?top" to "Deep Throat",
-        "$mainUrl/search/rough?top" to "Rough",
-        "$mainUrl/search/cum+in+mouth?top" to "Cum in mouth",
-        "$mainUrl/search/cum+inside?top" to "Cum Inside",
-        "$mainUrl/search/girlfriend?top" to "Girlfriend",
-        "$mainUrl/search/arab" to "Arab",
-        "$mainUrl/search/casting?top" to "Casting",
-        "$mainUrl/search/creampie" to "Creampie",
-        "$mainUrl/search/asian_woman" to "Asian",
-        "$mainUrl/search/missionary?top" to "Missionary",
-        "$mainUrl/search/outdoor?top" to "Outdoor",
-        "$mainUrl/search/cougar?top" to "Cougar",
-        "$mainUrl/search/stepmom+and+stepson?top" to "Stepmom and Stepson",
-        "$mainUrl/search/latina" to "Latina",
-        "$mainUrl/search/stepdaughter?top" to "Stepdaughter",
-        "$mainUrl/search/step+daughter?top" to "Step Daughter",
-        "$mainUrl/search/pov?top" to "Pov",
-        "$mainUrl/search/cowgirl?top" to "Cowgirl",
-        "$mainUrl/search/real?top" to "Real",
-        "$mainUrl/search/blowjob" to "Blowjob",
-        "$mainUrl/search/cheating?top" to "Cheating",
-        "$mainUrl/search/horny?top" to "Horny",
-        "$mainUrl/search/double+penetration?top" to "Double penetration",
-        "$mainUrl/search/exotic" to "Exotic",
-        "$mainUrl/search/hardsex?top" to "Hardsex",
-        "$mainUrl/search/shaved_pussy" to "Shaved Pussy",
-        "$mainUrl/search/curvy?top" to "Curvy",
-        "$mainUrl/search/virtual_reality" to "Virtual Realtity",
-        "$mainUrl/search/couple?top" to "Couple",
-        "$mainUrl/search/facial" to "Facial",
-        "$mainUrl/search/brunette" to "Brunette",
-        "$mainUrl/search/dirty+talk?top" to "Dirty Talk",
-        "$mainUrl/search/reverse+cowgirl?top" to "Reverse Cowgirl",
-        "$mainUrl/search/18+year+old?top" to "!8 Year Old",
-        "$mainUrl/search/caught?top" to "Caught",
-        "$mainUrl/search/fuck?top" to "Fu@k",
-        "$mainUrl/search/cum+in+pussy?top" to "Cum in pussy",
-        "$mainUrl/search/cute?top" to "Cute",
-        "$mainUrl/search/cheating+wife?top" to "Cheating Wife",
-        "$mainUrl/search/step+fantasy?top" to "Step Fantasy",
-        "$mainUrl/search/roleplay?top" to "Roleplay",
-        "$mainUrl/search/moaning?top" to "Moaning",
-        "$mainUrl/search/fantasy?top" to "Fantasy",
-        "$mainUrl/search/tight+pussy?top" to "Tight Pussy",
-        "$mainUrl/search/hard+fuck?top" to "Hard Fu@k",
-        "$mainUrl/search/car?top" to "Car",
-        "$mainUrl/search/bikini?top" to "Bikini",
-        "$mainUrl/search/riding?top" to "Riding",
-        "$mainUrl/search/russian?top" to "Russian",
-        "$mainUrl/search/hijab?top" to "Hijab",
-        "$mainUrl/search/solo_and_masturbation" to "Solo Masturbation",
-        "$mainUrl/search/bukkake" to "Bukkake",
-        "$mainUrl/search/hot?top" to "Hot",
-        "$mainUrl/search/real+orgasm?top" to "Real orgasm",
-        "$mainUrl/search/rough+sex?top" to "Rough sex",
-        "$mainUrl/search/indian" to "India / Indian girls",
-        "$mainUrl/search/old?top" to "Old",
-        "$mainUrl/search/outdoor?top" to "Outdoor",
-        "$mainUrl/search/cougar?top" to "Cougar" 
+        "$mainUrl/" to "Home",
+        "$mainUrl/best/" to "Best",
+        "$mainUrl/new/" to "New",
+        "$mainUrl/search/amateur" to "Amateur",
+        "$mainUrl/search/hd" to "HD"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -95,7 +37,6 @@ class XNXX : MainAPI() {
         }
 
         val document = app.get(url, headers = mainHeaders).document
-        // Comprehensive selectors to target video cards layout on XNXX
         val items = document.select("div.mozaique div.thumb-block, div.thumb-block, .magnum-block")
 
         val home = items.mapNotNull { it.toSearchResponse() }
@@ -157,11 +98,15 @@ class XNXX : MainAPI() {
         
         val tags = document.select("span.metadata-row.tags a, .video-metadata .tag").mapNotNull { it.text().trim() }
 
+        // Extract recommendations/related videos from the watch page
+        val recommendations = document.select("div.mozaique div.thumb-block, div.thumb-block, .magnum-block").mapNotNull { it.toSearchResponse() }
+
         return newMovieLoadResponse(title, url, TvType.NSFW, url) {
             this.posterUrl = poster
             this.posterHeaders = mainHeaders
             this.plot = description
             this.tags = tags
+            this.recommendations = recommendations
         }
     }
 
@@ -174,7 +119,6 @@ class XNXX : MainAPI() {
         val res = app.get(data, headers = mainHeaders)
         val html = res.text
 
-        // Parse native video links embedded inside the XNXX JavaScript player variables
         val highQualRegex = Regex("setVideoUrlHigh\\s*\\(\\s*['\"]([^'\"]+)['\"]\\s*\\)")
         val lowQualRegex = Regex("setVideoUrlLow\\s*\\(\\s*['\"]([^'\"]+)['\"]\\s*\\)")
         val lowQualAltRegex = Regex("setVideoUrlVLow\\s*\\(\\s*['\"]([^'\"]+)['\"]\\s*\\)")
