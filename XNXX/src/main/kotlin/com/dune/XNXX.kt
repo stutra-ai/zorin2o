@@ -97,13 +97,18 @@ class XNXX : MainAPI() {
             ?: "Unknown"
 
         val poster = fixUrlNull(document.selectFirst("meta[property='og:image']")?.attr("content"))
-        val description = document.selectFirst("meta[property='og:description']")?.attr("content") ?: ""
+        val description = document.selectFirst("meta[property='og:description']")?.attr("content"] ?: ""
         
         val tags = document.select("span.metadata-row.tags a, .video-metadata .tag").mapNotNull { it.text().trim() }
 
-        val recommendations = document.select("div.thumb-block")
-            .mapNotNull { it.toRecommendationResult() }
-            .distinctBy { it.url }
+        // Targeted selector pointing to related/sidebar sections and fallback grid blocks on the watch page
+        val recommendations = document.select(
+            "#video-block-related div.thumb-block, " +
+            "div.related-list div.thumb-block, " +
+            "div.mozaique-vertical div.thumb-block, " +
+            "div.widget-videoview-related div.thumb-block, " +
+            "div.thumb-block"
+        ).mapNotNull { it.toRecommendationResult() }.distinctBy { it.url }
 
         return newMovieLoadResponse(title, url, TvType.NSFW, url) {
             this.posterUrl = poster
