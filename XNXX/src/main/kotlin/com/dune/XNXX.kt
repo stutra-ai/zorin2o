@@ -21,19 +21,24 @@ class XNXX : MainAPI() {
     )
 
     override val mainPage = mainPageOf(
-        "$mainUrl/" to "Home",
-        "$mainUrl/best/" to "Best",
-        "$mainUrl/new/" to "New",
+        "$mainUrl/home" to "Home",
+        "$mainUrl/best" to "Best",
+        "$mainUrl/new" to "New",
         "$mainUrl/search/amateur" to "Amateur",
         "$mainUrl/search/hd" to "HD"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        val data = request.data.removeSuffix("/")
         val url = if (page == 1) {
-            request.data
+            data
         } else {
-            val base = request.data.removeSuffix("/")
-            "$base/$page"
+            // Check if it's a search/tag path or standard feed path
+            if (data.contains("/search/")) {
+                "$data/$page"
+            } else {
+                "$data/$page"
+            }
         }
 
         val document = app.get(url, headers = mainHeaders).document
@@ -65,9 +70,12 @@ class XNXX : MainAPI() {
         val href = fixUrlNull(if (rawHref.startsWith("http")) rawHref else "$mainUrl$rawHref") ?: return null
 
         val imgElement = this.selectFirst("img")
-        val posterUrl = imgElement?.attr("data-src") 
-            ?: imgElement?.attr("src") 
-            ?: imgElement?.attr("data-original")
+        val posterUrl = fixUrlNull(
+            imgElement?.attr("data-src") 
+                ?: imgElement?.attr("src") 
+                ?: imgElement?.attr("data-original")
+                ?: imgElement?.attr("data-lazy-src")
+        )
 
         return newMovieSearchResponse(title, href, TvType.NSFW) {
             this.posterUrl = posterUrl
@@ -93,13 +101,14 @@ class XNXX : MainAPI() {
             ?: document.selectFirst("h1")?.text()?.trim()
             ?: "Unknown"
 
-        val poster = document.selectFirst("meta[property='og:image']")?.attr("content")
+        val poster = fixUrlNull(document.selectFirst("meta[property='og:image']")?.attr("content"))
         val description = document.selectFirst("meta[property='og:description']")?.attr("content") ?: ""
         
         val tags = document.select("span.metadata-row.tags a, .video-metadata .tag").mapNotNull { it.text().trim() }
 
-        // Extract recommendations/related videos from the watch page
-        val recommendations = document.select("div.mozaique div.thumb-block, div.thumb-block, .magnum-block").mapNotNull { it.toSearchResponse() }
+        val recommendations = document.select("div.thumb-block")
+            .mapNotNull { it.toRecommendationResult() }
+            .distinctBy { it.url }
 
         return newMovieLoadResponse(title, url, TvType.NSFW, url) {
             this.posterUrl = poster
@@ -107,6 +116,32 @@ class XNXX : MainAPI() {
             this.plot = description
             this.tags = tags
             this.recommendations = recommendations
+        }
+    }
+
+    private fun Element.toRecommendationResult(): SearchResponse? {
+        val titleElement = this.selectFirst("p.title a") 
+            ?: this.selectFirst("a.title") 
+            ?: this.selectFirst("a[title]") 
+            ?: return null
+
+        val title = titleElement.attr("title").trim().ifBlank { titleElement.text().trim() }
+        if (title.isBlank()) return null
+
+        val rawHref = titleElement.attr("href")
+        val href = fixUrlNull(if (rawHref.startsWith("http")) rawHref else "$mainUrl$rawHref") ?: return/n null
+
+        val imgElement = this.selectFirst("img")
+        val posterUrl = fixUrlNull(
+            imgElement?.attr("data-src") 
+                ?: imgElement?.attr("src") 
+                ?: imgElement?.attr("data-original")
+                ?: imgElement?.attr("data-lazy-src")
+        )
+
+        return newMovieSearchResponse(title, href, TvType.NSFW) {
+            this.posterUrl = posterUrl
+            this.posterHeaders = mainHeaders
         }
     }
 
