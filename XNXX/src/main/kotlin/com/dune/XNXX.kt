@@ -97,11 +97,10 @@ class XNXX : MainAPI() {
             ?: "Unknown"
 
         val poster = fixUrlNull(document.selectFirst("meta[property='og:image']")?.attr("content"))
-        val description = document.selectFirst("meta[property='og:description']")?.attr("content"] ?: ""
+        val description = document.selectFirst("meta[property='og:description']")?.attr("content") ?: ""
         
         val tags = document.select("span.metadata-row.tags a, .video-metadata .tag").mapNotNull { it.text().trim() }
 
-        // Targeted selector pointing to related/sidebar sections and fallback grid blocks on the watch page
         val recommendations = document.select(
             "#video-block-related div.thumb-block, " +
             "div.related-list div.thumb-block, " +
