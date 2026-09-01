@@ -33,12 +33,7 @@ class XNXX : MainAPI() {
         val url = if (page == 1) {
             data
         } else {
-            // Check if it's a search/tag path or standard feed path
-            if (data.contains("/search/")) {
-                "$data/$page"
-            } else {
-                "$data/$page"
-            }
+            "$data/$page"
         }
 
         val document = app.get(url, headers = mainHeaders).document
@@ -129,7 +124,7 @@ class XNXX : MainAPI() {
         if (title.isBlank()) return null
 
         val rawHref = titleElement.attr("href")
-        val href = fixUrlNull(if (rawHref.startsWith("http")) rawHref else "$mainUrl$rawHref") ?: return/n null
+        val href = fixUrlNull(if (rawHref.startsWith("http")) rawHref else "$mainUrl$rawHref") ?: return null
 
         val imgElement = this.selectFirst("img")
         val posterUrl = fixUrlNull(
