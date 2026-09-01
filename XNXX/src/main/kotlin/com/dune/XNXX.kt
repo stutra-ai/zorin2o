@@ -27,7 +27,7 @@ class XNXX : MainAPI() {
         "$mainUrl/search/deepthroat?top" to "Deepthroat",
         "$mainUrl/search/deep+throat?top" to "Deep Throat",
         "$mainUrl/search/rough?top" to "Rough",
-        "$mainUrl/search/cum+in+mouth?top" to "Cum in mouth"
+        "$mainUrl/search/cum+in+mouth?top" to "Cum in mouth",
         "$mainUrl/search/cum+inside?top" to "Cum Inside",
         "$mainUrl/search/girlfriend?top" to "Girlfriend",
         "$mainUrl/search/arab" to "Arab",
