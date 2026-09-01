@@ -56,13 +56,15 @@ class XNXX : MainAPI() {
         val titleElement = this.selectFirst("p.title a") 
             ?: this.selectFirst("a.title") 
             ?: this.selectFirst("a[title]") 
+            ?: this.selectFirst("a") 
             ?: return null
 
-        val title = titleElement.attr("title").trim().ifBlank { titleElement.text().trim() }
+        val title = titleElement.attr("title").ifBlank { titleElement.text() }.trim()
         if (title.isBlank()) return null
         
         val rawHref = titleElement.attr("href")
-        val href = fixUrlNull(if (rawHref.startsWith("http")) rawHref else "$mainUrl$rawHref") ?: return null
+        if (rawHref.isBlank()) return null
+        val href = if (rawHref.startsWith("http")) rawHref else "$mainUrl$rawHref"
 
         val imgElement = this.selectFirst("img")
         val posterUrl = fixUrlNull(
@@ -101,13 +103,11 @@ class XNXX : MainAPI() {
         
         val tags = document.select("span.metadata-row.tags a, .video-metadata .tag").mapNotNull { it.text().trim() }
 
-        val recommendations = document.select(
-            "#video-block-related div.thumb-block, " +
-            "div.related-list div.thumb-block, " +
-            "div.mozaique-vertical div.thumb-block, " +
-            "div.widget-videoview-related div.thumb-block, " +
-            "div.thumb-block"
-        ).mapNotNull { it.toRecommendationResult() }.distinctBy { it.url }
+        // Extract recommendations and filter out the current video URL to prevent self-reference loops
+        val recommendations = document.select("div.thumb-block")
+            .mapNotNull { it.toRecommendationResult() }
+            .filter { it.url != url }
+            .distinctBy { it.url }
 
         return newMovieLoadResponse(title, url, TvType.NSFW, url) {
             this.posterUrl = poster
@@ -122,13 +122,15 @@ class XNXX : MainAPI() {
         val titleElement = this.selectFirst("p.title a") 
             ?: this.selectFirst("a.title") 
             ?: this.selectFirst("a[title]") 
+            ?: this.selectFirst("a") 
             ?: return null
 
-        val title = titleElement.attr("title").trim().ifBlank { titleElement.text().trim() }
+        val title = titleElement.attr("title").ifBlank { titleElement.text() }.trim()
         if (title.isBlank()) return null
 
         val rawHref = titleElement.attr("href")
-        val href = fixUrlNull(if (rawHref.startsWith("http")) rawHref else "$mainUrl$rawHref") ?: return null
+        if (rawHref.isBlank()) return null
+        val href = if (rawHref.startsWith("http")) rawHref else "$mainUrl$rawHref"
 
         val imgElement = this.selectFirst("img")
         val posterUrl = fixUrlNull(
