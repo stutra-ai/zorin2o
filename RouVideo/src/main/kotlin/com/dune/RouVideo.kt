@@ -142,37 +142,50 @@ class RouVideo : MainAPI() {
         try {
             val reqHeaders = headers.toMutableMap().apply {
                 put("Referer", data)
-                put("Accept", "*/*")
+                put("Accept", "application/json, text/javascript, */*; q=0.01")
+                put("X-Requested-With", "XMLHttpRequest")
+                put("Content-Type", "application/json")
             }
 
-            // Step 1: Visit the watch page to establish session state
+            val videoId = data.substringAfterLast("/v/").substringBefore("?")
+            if (videoId.isBlank()) return false
+
+            // Step 1: Establish session cookies by visiting the watch page
             app.get(data, headers = reqHeaders)
 
-            // Step 2: Request the API route to trigger the CDN redirect
-            val videoId = data.substringAfterLast("/v/").substringBefore("?")
-            if (videoId.isNotBlank()) {
-                val apiUrl = "$mainUrl/api/hls/$videoId"
-                Log.d("RouVideo", "Requesting API URL: $apiUrl")
-                
-                val response = app.get(apiUrl, headers = reqHeaders)
-                val finalUrl = response.url
-                Log.d("RouVideo", "Resolved Stream URL: $finalUrl")
+            // Step 2: Execute the POST /play handshake to unlock the stream on the backend
+            val playUrl = "$mainUrl/api/v/$videoId/play"
+            Log.d("RouVideo", "Executing play handshake: $playUrl")
+            app.post(playUrl, headers = reqHeaders, data = emptyMap<String, String>())
 
-                if (finalUrl.isNotBlank() && !finalUrl.contains("/api/hls/") && !finalUrl.contains("rou.video")) {
-                    callback.invoke(
-                        newExtractorLink(name, "$name CDN", finalUrl, ExtractorLinkType.M3U8) {
-                            this.referer = data // Match exact watch page referer required by CDN
-                            this.headers = mapOf(
-                                "Origin" to mainUrl,
-                                "Referer" to data,
-                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                            )
-                        }
-                    )
-                    return true
-                } else {
-                    Log.e("RouVideo", "Invalid redirect URL resolved: $finalUrl")
-                }
+            // Step 3: Request the HLS API route to get the authorized stream redirect URL
+            val apiUrl = "$mainUrl/api/hls/$videoId"
+            Log.d("RouVideo", "Requesting API URL: $apiUrl")
+            
+            val response = app.get(apiUrl, headers = reqHeaders)
+            var streamUrl = response.url
+
+            // Step 4: Swap out the index.png mask for the real index.m3u8 playlist
+            if (streamUrl.contains("index.png")) {
+                streamUrl = streamUrl.replace("index.png", "index.m3u8")
+            }
+
+            Log.d("RouVideo", "Resolved Stream URL: $streamUrl")
+
+            if (streamUrl.isNotBlank() && streamUrl.contains(".m3u8")) {
+                callback.invoke(
+                    newExtractorLink(name, "$name CDN", streamUrl, ExtractorLinkType.M3U8) {
+                        this.referer = data
+                        this.headers = mapOf(
+                            "Origin" to mainUrl,
+                            "Referer" to data,
+                            "User-Agent" to headers["User-Agent"].toString()
+                        )
+                    }
+                )
+                return true
+            } else {
+                Log.e("RouVideo", "Invalid stream URL resolved: $streamUrl")
             }
 
         } catch (e: Throwable) {
