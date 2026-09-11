@@ -2,144 +2,135 @@ package com.dune
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import org.jsoup.nodes.Element
 import android.util.Log
-import com.fasterxml.jackson.annotation.JsonProperty
 
 class RouVideo : MainAPI() {
+    override var name = "RouVideo"
     override var mainUrl = "https://rou.video"
-    override var name = "Rou.video"
-    override val hasMainPage = true
+    override var supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
     override var lang = "zh"
-    override val hasQuickSearch = true
-    override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie)
+    override var hasMainPage = true
 
-    private val mainHeaders = mapOf(
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language" to "zh-CN,zh;q=0.9,en;q=0.8",
-        "Referer" to "$mainUrl/"
-    )
-
-    override val mainPage = mainPageOf(
-        "$mainUrl/" to "热门短剧",
-        "$mainUrl/rank" to "排行榜",
-        "$mainUrl/fresh" to "最新更新"
+    private val headers = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer" to "$mainUrl/",
+        "Cookie" to "age_verified=true; adult=true; override_age=1"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val document = app.get(request.data, headers = mainHeaders).document
-        val scriptContent = document.select("script#__NEXT_DATA__").html()
-        val homeList = mutableListOf<SearchResponse>()
+        // Fetch from /home where the actual video listings reside after age verification
+        val document = app.get("$mainUrl/home", headers = headers).document
+        val items = ArrayList<SearchResponse>()
 
-        try {
-            if (scriptContent.isNotBlank()) {
-                val parsedJson = mapper.readValue(scriptContent, NextDataRoot::class.java)
-                val pageProps = parsedJson.props?.pageProps
-                
-                val rawItems: List<VideoItem> = pageProps?.heroRanking 
-                    ?: pageProps?.rankedSeries 
-                    ?: pageProps?.latestVideos 
-                    ?: emptyList()
-                
-                for (item in rawItems) {
-                    val title = item.title ?: item.name ?: continue
-                    val id = item.id ?: item.slug ?: continue
-                    val poster = item.cover ?: item.poster ?: item.image ?: ""
-                    val href = "$mainUrl/detail/$id"
-                    val isSeries = item.firstEpisodeId != null || item.episodesCount != null
+        // Target anchor cards that contain an image and point to /v/ or /s/
+        val cards = document.select("a:has(img)[href*='/v/'], a:has(img)[href*='/s/']")
+        
+        for (card in cards) {
+            val href = card.attr("href")
+            if (href.isBlank()) continue
+            val fullUrl = if (href.startsWith("http")) href else "$mainUrl$href"
+            
+            if (items.any { it.url == fullUrl }) continue
 
-                    homeList.add(
-                        if (isSeries) {
-                            newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
-                                this.posterUrl = poster
-                                this.posterHeaders = mainHeaders
-                            }
-                        } else {
-                            newMovieSearchResponse(title, href, TvType.Movie) {
-                                this.posterUrl = poster
-                                this.posterHeaders = mainHeaders
-                            }
-                        }
-                    )
+            val rawText = card.text().trim()
+            val title = card.select(".font-bold, h3, h4, .title").text()
+                .ifBlank {
+                    rawText.replace(Regex("本週更新.*?集\\s*"), "")
+                        .replace(Regex("本週更新.*?期\\s*"), "")
+                        .substringBefore("AI短劇")
+                        .trim()
+                }
+                .ifBlank { 
+                    val hash = href.substringAfterLast("/")
+                    if (href.contains("/s/")) "合集 $hash" else "影片 $hash"
+                }
+
+            val img = card.select("img").first()
+            val posterUrl = img?.attr("src")?.ifBlank { img.attr("data-src") } ?: ""
+
+            val isSeries = href.contains("/s/")
+            val tvType = if (isSeries) TvType.TvSeries else TvType.Movie
+
+            val res = if (isSeries) {
+                newTvSeriesSearchResponse(title, fullUrl, tvType) {
+                    this.posterUrl = if (posterUrl.startsWith("http")) posterUrl else if (posterUrl.isNotBlank()) "$mainUrl$posterUrl" else null
+                }
+            } else {
+                newMovieSearchResponse(title, fullUrl, tvType) {
+                    this.posterUrl = if (posterUrl.startsWith("http")) posterUrl else if (posterUrl.isNotBlank()) "$mainUrl$posterUrl" else null
                 }
             }
-        } catch (e: Exception) {
-            Log.d("kraptor_$name", "Error parsing Next.js data: ${e.message}")
-            val domItems = document.select("div.video-item, .item-card")
-            for (element in domItems) {
-                val link = element.selectFirst("a") ?: continue
-                val href = fixUrlNull(link.attr("href")) ?: continue
-                val title = element.selectFirst(".title, h3")?.text()?.trim() ?: "Unknown"
-                val poster = fixUrlNull(element.selectFirst("img")?.attr("src"))
-                
-                homeList.add(
-                    newMovieSearchResponse(title, href, TvType.Movie) {
-                        this.posterUrl = poster
-                        this.posterHeaders = mainHeaders
-                    }
-                )
-            }
+            items.add(res)
         }
 
-        return newHomePageResponse(
-            HomePageList(
-                name = request.name,
-                list = homeList,
-                isHorizontalImages = true
-            ),
-            hasNext = homeList.isNotEmpty()
-        )
+        return newHomePageResponse(listOf(HomePageList("熱門推薦", items)))
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val url = "$mainUrl/search?q=$query"
-        val document = app.get(url, headers = mainHeaders).document
-        val items = document.select("div.video-item, article")
-        
-        return items.mapNotNull { element ->
-            val link = element.selectFirst("a") ?: return@mapNotNull null
-            val href = fixUrlNull(link.attr("href")) ?: return@mapNotNull null
-            val title = element.selectFirst(".title, h3")?.text()?.trim() ?: return@mapNotNull null
-            val poster = fixUrlNull(element.selectFirst("img")?.attr("src"))
+        val searchUrl = "$mainUrl/search?q=$query"
+        val document = app.get(searchUrl, headers = headers).document
+        val results = ArrayList<SearchResponse>()
 
-            newMovieSearchResponse(title, href, TvType.Movie) {
-                this.posterUrl = poster
-                this.posterHeaders = mainHeaders
+        val links = document.select("a[href*='/v/'], a[href*='/s/']")
+        for (link in links) {
+            val href = link.attr("href")
+            if (href.isBlank()) continue
+            val fullUrl = if (href.startsWith("http")) href else "$mainUrl$href"
+            if (results.any { it.url == fullUrl }) continue
+
+            val title = link.text().ifBlank { "影片/合集" }
+            val isSeries = href.contains("/s/")
+            val tvType = if (isSeries) TvType.TvSeries else TvType.Movie
+
+            val res = if (isSeries) {
+                newTvSeriesSearchResponse(title, fullUrl, tvType)
+            } else {
+                newMovieSearchResponse(title, fullUrl, tvType)
             }
+            results.add(res)
         }
+
+        return results
     }
 
-    override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query)
-
     override suspend fun load(url: String): LoadResponse {
-        val document = app.get(url, headers = mainHeaders).document
+        val document = app.get(url, headers = headers).document
+        val title = document.select("meta[property=og:title]").attr("content")
+            .ifBlank { document.select("title").text() }
+            .ifBlank { "RouVideo 內容" }
+        val poster = document.select("meta[property=og:image]").attr("content")
+        val description = document.select("meta[property=og:description]").attr("content")
 
-        val title = document.selectFirst("h1.title, h1")?.text()?.trim() ?: "Unknown"
-        val poster = fixUrlNull(document.selectFirst("meta[property=og:image]")?.attr("content"))
-        val description = document.selectFirst("meta[name=description]")?.attr("content") ?: ""
-
-        val episodeElements = document.select("div.episode-list a, .episodes-grid button")
-        
-        if (episodeElements.isNotEmpty()) {
-            val episodes = episodeElements.mapIndexed { index, element ->
-                val epHref = fixUrlNull(element.attr("href")) ?: url
-                val epNum = element.text().trim().toIntOrNull() ?: (index + 1)
-                newEpisode(epHref) {
-                    name = "第 ${epNum} 集"
-                    episode = epNum
+        return if (url.contains("/s/")) {
+            val episodes = ArrayList<Episode>()
+            val epLinks = document.select("a[href*='/v/']")
+            var index = 1
+            for (epLink in epLinks) {
+                val epHref = epLink.attr("href")
+                if (epHref.isBlank()) continue
+                val epUrl = if (epHref.startsWith("http")) epHref else "$mainUrl$epHref"
+                val epTitle = epLink.text().ifBlank { "第 $index 集" }
+                if (episodes.none { it.data == epUrl }) {
+                    episodes.add(newEpisode(epUrl) {
+                        this.name = epTitle
+                        this.episode = index++
+                    })
                 }
             }
-            return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
-                this.posterUrl = poster
-                this.posterHeaders = mainHeaders
-                this.plot = description
+            if (episodes.isEmpty()) {
+                episodes.add(newEpisode(url) {
+                    this.name = title
+                    this.episode = 1
+                })
+            }
+            newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
+                this.posterUrl = poster.ifBlank { null }
+                this.plot = description.ifBlank { null }
             }
         } else {
-            return newMovieLoadResponse(title, url, TvType.Movie, url) {
-                this.posterUrl = poster
-                this.posterHeaders = mainHeaders
-                this.plot = description
+            newMovieLoadResponse(title, url, TvType.Movie, url) {
+                this.posterUrl = poster.ifBlank { null }
+                this.plot = description.ifBlank { null }
             }
         }
     }
@@ -150,69 +141,36 @@ class RouVideo : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val document = app.get(data, headers = mainHeaders).document
-        
-        val folderAttr = document.selectFirst("[data-folder]")?.attr("data-folder")
-        if (!folderAttr.isNullOrBlank()) {
-            val videoUrl = "https://v.rn252.xyz/m/$folderAttr/index.m3u8"
-            callback.invoke(
-                newExtractorLink(
-                    source = name,
-                    name = "$name CDN",
-                    url = videoUrl,
-                    type = ExtractorLinkType.M3U8
-                ) {
-                    this.referer = "$mainUrl/"
-                }
-            )
-            return true
+        try {
+            val document = app.get(data, headers = headers).document
+            val html = document.html()
+
+            val hashRegex = Regex("/m/([a-zA-Z0-9_-]{20,})/")
+            val match = hashRegex.find(html)
+            if (match != null) {
+                val hash = match.groupValues[1]
+                val m3u8 = "https://v.rn252.xyz/m/$hash/index.m3u8"
+                callback.invoke(
+                    newExtractorLink(name, "$name CDN", m3u8, ExtractorLinkType.M3U8) {
+                        this.referer = "$mainUrl/"
+                    }
+                )
+                return true
+            }
+
+            val hlsRegex = Regex("[\"'](https?://[^\"']+\\.m3u8[^\"']*)[\"']")
+            val hlsMatch = hlsRegex.find(html)?.groupValues?.get(1)
+            if (hlsMatch != null) {
+                callback.invoke(
+                    newExtractorLink(name, "$name Stream", hlsMatch, ExtractorLinkType.M3U8) {
+                        this.referer = "$mainUrl/"
+                    }
+                )
+                return true
+            }
+        } catch (e: Exception) {
+            Log.e("RouVideo", "Error loading links: ${e.message}", e)
         }
-
-        val scriptText = document.select("script").html()
-        val hlsRegex = Regex("[\"'](https?://[^\"']+\\.m3u8[^\"']*)[\"']")
-        val match = hlsRegex.find(scriptText)?.groupValues?.get(1)
-
-        if (match != null) {
-            callback.invoke(
-                newExtractorLink(
-                    source = name,
-                    name = "$name Stream",
-                    url = match,
-                    type = ExtractorLinkType.M3U8
-                ) {
-                    this.referer = "$mainUrl/"
-                }
-            )
-            return true
-        }
-
         return false
     }
-
-    data class NextDataRoot(
-        @JsonProperty("props") val props: Props? = null
-    )
-    data class Props(
-        @JsonProperty("pageProps") val pageProps: PageProps? = null
-    )
-    data class PageProps(
-        @JsonProperty("heroRanking") val el1: List<VideoItem>? = null,
-        @JsonProperty("rankedSeries") val el2: List<VideoItem>? = null,
-        @JsonProperty("latestVideos") val el3: List<VideoItem>? = null
-    ) {
-        val heroRanking: List<VideoItem>? get() = el1
-        val rankedSeries: List<VideoItem>? get() = el2
-        val latestVideos: List<VideoItem>? get() = el3
-    }
-    data class VideoItem(
-        @JsonProperty("id") val id: String? = null,
-        @JsonProperty("slug") val slug: String? = null,
-        @JsonProperty("title") val title: String? = null,
-        @JsonProperty("name") val name: String? = null,
-        @JsonProperty("cover") val cover: String? = null,
-        @JsonProperty("poster") val poster: String? = null,
-        @JsonProperty("image") val image: String? = null,
-        @JsonProperty("firstEpisodeId") val firstEpisodeId: String? = null,
-        @JsonProperty("episodesCount") val episodesCount: Int? = null
-    )
 }
