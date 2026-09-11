@@ -155,14 +155,12 @@ class RouVideo : MainAPI() {
             // Step 1: Visit watch page and parse dynamic tags for the POST body
             val document = app.get(data, headers = siteHeaders).document
             val tags = document.select(".tags a, .badge, [class*='tag'], [class*='genre']").map { it.text().trim() }.filter { it.isNotBlank() }
-            
-            val jsonTags = if (tags.isNotEmpty()) tags.joinToString(prefix = "[", postfix = "]") { "\"$it\"" } else "[\"AI短劇\"]"
-            val jsonBody = "{\"tags\":$jsonTags}"
+            val payloadTags = if (tags.isNotEmpty()) tags else listOf("AI短劇")
 
-            // Step 2: Execute the POST /play handshake to authorize the stream session
+            // Step 2: Execute the POST /play handshake using Cloudstream's native json parameter
             val playUrl = "$mainUrl/api/v/$videoId/play"
-            Log.d("RouVideo", "Executing play handshake: $playUrl with body: $jsonBody")
-            app.post(playUrl, headers = siteHeaders, requestBody = createAppRequestBody(jsonBody))
+            Log.d("RouVideo", "Executing play handshake: $playUrl with tags: $payloadTags")
+            app.post(playUrl, headers = siteHeaders, json = mapOf("tags" to payloadTags))
 
             // Step 3: Request the HLS API route to get the CDN redirect URL
             val apiUrl = "$mainUrl/api/hls/$videoId"
