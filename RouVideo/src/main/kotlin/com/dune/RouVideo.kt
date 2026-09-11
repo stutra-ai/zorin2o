@@ -34,10 +34,13 @@ class RouVideo : MainAPI() {
 
         try {
             if (scriptContent.isNotBlank()) {
-                val parsedJson = app.parseJson<NextDataRoot>(scriptContent)
+                val parsedJson = mapper.readValue(scriptContent, NextDataRoot::class.java)
                 val pageProps = parsedJson.props?.pageProps
                 
-                val rawItems = pageProps?.heroRanking ?: pageProps?.rankedSeries ?: pageProps?.latestVideos ?: emptyList()
+                val rawItems: List<VideoItem> = pageProps?.heroRanking 
+                    ?: pageProps?.rankedSeries 
+                    ?: pageProps?.latestVideos 
+                    ?: emptyList()
                 
                 for (item in rawItems) {
                     val title = item.title ?: item.name ?: continue
@@ -193,10 +196,14 @@ class RouVideo : MainAPI() {
         @JsonProperty("pageProps") val pageProps: PageProps? = null
     )
     data class PageProps(
-        @JsonProperty("heroRanking") val heroRanking: List<VideoItem>? = null,
-        @JsonProperty("rankedSeries") val rankedSeries: List<VideoItem>? = null,
-        @JsonProperty("latestVideos") val latestVideos: List<VideoItem>? = null
-    )
+        @JsonProperty("heroRanking") val el1: List<VideoItem>? = null,
+        @JsonProperty("rankedSeries") val el2: List<VideoItem>? = null,
+        @JsonProperty("latestVideos") val el3: List<VideoItem>? = null
+    ) {
+        val heroRanking: List<VideoItem>? get() = el1
+        val rankedSeries: List<VideoItem>? get() = el2
+        val latestVideos: List<VideoItem>? get() = el3
+    }
     data class VideoItem(
         @JsonProperty("id") val id: String? = null,
         @JsonProperty("slug") val slug: String? = null,
