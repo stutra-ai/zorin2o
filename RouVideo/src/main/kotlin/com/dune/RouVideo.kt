@@ -140,9 +140,31 @@ class RouVideo : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         try {
+            // 1. Extract video ID from URL (e.g. cmtv4sq6u0009muxgtjm38ppu)
+            val videoId = data.substringAfterLast("/v/").substringBefore("?")
+            if (videoId.isNotBlank()) {
+                val apiUrl = "$mainUrl/api/hls/$videoId"
+                
+                // Request API endpoint with allowRedirects = false to capture the 302 Location header
+                val response = app.get(apiUrl, headers = headers, allowRedirects = false)
+                val redirectUrl = response.headers["location"] ?: response.headers["Location"]
+
+                if (!redirectUrl.isNullOrBlank()) {
+                    callback.invoke(
+                        newExtractorLink(name, "$name CDN", redirectUrl, ExtractorLinkType.M3U8) {
+                            this.referer = "$mainUrl/"
+                            this.headers = mapOf(
+                                "Origin" to mainUrl,
+                                "Referer" to "$mainUrl/"
+                            )
+                        }
+                    )
+                    return true
+                }
+            }
+
+            // 2. Fallback: Parse OpenGraph meta image token hash
             val document = app.get(data, headers = headers).document
-            
-            // Extract the token hash directly from the OpenGraph image meta tag which contains the authorized CDN proxy path
             val ogImage = document.select("meta[property=og:image]").attr("content")
             val hashMatch = Regex("/m/([a-zA-Z0-9_-]{20,})/").find(ogImage)
             
@@ -151,32 +173,19 @@ class RouVideo : MainAPI() {
                 val streamUrl = "https://v.rn252.xyz/m/$hash/index.m3u8"
                 
                 callback.invoke(
-                    newExtractorLink(name, "$name CDN", streamUrl, ExtractorLinkType.M3U8) {
+                    newExtractorLink(name, "$name CDN (Fallback)", streamUrl, ExtractorLinkType.M3U8) {
                         this.referer = "$mainUrl/"
-                        this.headers = mapOf("Origin" to mainUrl)
+                        this.headers = mapOf(
+                            "Origin" to mainUrl,
+                            "Referer" to "$mainUrl/"
+                        )
                     }
                 )
                 return true
             }
 
-            // Fallback: search the entire page html for any /m/[hash]/ pattern
-            val html = document.html()
-            val fallbackMatch = Regex("/m/([a-zA-Z0-9_-]{20,})/").find(html)
-            if (fallbackMatch != null) {
-                val hash = fallbackMatch.groupValues[1]
-                val streamUrl = "https://v.rn252.xyz/m/$hash/index.m3u8"
-                
-                callback.invoke(
-                    newExtractorLink(name, "$name Stream", streamUrl, ExtractorLinkType.M3U8) {
-                        this.referer = "$mainUrl/"
-                        this.headers = mapOf("Origin" to mainUrl)
-                    }
-                )
-                return true
-            }
-
-        } catch (e: Exception) {
-            Log.e("RouVideo", "Error loading links: ${e.message}", e)
+        } catch (e: Throwable) {
+            Log.e("RouVideo", "Error loading links: ${e.localizedMessage}", e)
         }
         return false
     }
