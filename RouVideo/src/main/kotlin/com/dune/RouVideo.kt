@@ -24,7 +24,6 @@ class RouVideo : MainAPI() {
         val scriptContent = document.select("script#__NEXT_DATA__").html()
         if (scriptContent.isNotBlank()) {
             try {
-                // Match both /v/ and /s/ hashes
                 val pathRegex = Regex("/([vs])/([a-zA-Z0-9_-]{20,})/")
                 val matches = pathRegex.findAll(scriptContent)
                 
@@ -127,7 +126,6 @@ class RouVideo : MainAPI() {
         val poster = document.select("meta[property=og:image]").attr("content")
         val description = document.select("meta[property=og:description]").attr("content")
 
-        // Check if it's a serial / show (/s/) or a single movie (/v/)
         if (url.contains("/s/")) {
             val episodes = ArrayList<Episode>()
             val episodeLinks = document.select("a[href*=/v/]")
@@ -140,23 +138,20 @@ class RouVideo : MainAPI() {
                 
                 if (episodes.none { it.data == epUrl }) {
                     episodes.add(
-                        Episode(
-                            data = epUrl,
-                            name = epTitle,
-                            episode = epIndex++
-                        )
+                        newEpisode(epUrl) {
+                            this.name = epTitle
+                            this.episode = epIndex++
+                        }
                     )
                 }
             }
 
-            // Fallback if no sub-links found directly: treat the serial itself as an entry or load via its own hash
             if (episodes.isEmpty()) {
                 episodes.add(
-                    Episode(
-                        data = url,
-                        name = title,
-                        episode = 1
-                    )
+                    newEpisode(url) {
+                        this.name = title
+                        this.episode = 1
+                    }
                 )
             }
 
