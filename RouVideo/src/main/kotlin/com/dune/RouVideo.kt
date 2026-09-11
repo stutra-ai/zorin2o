@@ -140,18 +140,22 @@ class RouVideo : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         try {
-            // 1. Extract video ID from URL (e.g. cmtv4sq6u0009muxgtjm38ppu)
             val videoId = data.substringAfterLast("/v/").substringBefore("?")
             if (videoId.isNotBlank()) {
                 val apiUrl = "$mainUrl/api/hls/$videoId"
                 
-                // Request API endpoint with allowRedirects = false to capture the 302 Location header
-                val response = app.get(apiUrl, headers = headers, allowRedirects = false)
-                val redirectUrl = response.headers["location"] ?: response.headers["Location"]
+                val reqHeaders = headers.toMutableMap().apply {
+                    put("Referer", data)
+                    put("Accept", "*/*")
+                }
 
-                if (!redirectUrl.isNullOrBlank()) {
+                // Automatically follow redirects and capture the final resolved CDN URL
+                val response = app.get(apiUrl, headers = reqHeaders)
+                val finalUrl = response.url
+
+                if (finalUrl.isNotBlank() && !finalUrl.contains("/api/hls/")) {
                     callback.invoke(
-                        newExtractorLink(name, "$name CDN", redirectUrl, ExtractorLinkType.M3U8) {
+                        newExtractorLink(name, "$name CDN", finalUrl, ExtractorLinkType.M3U8) {
                             this.referer = "$mainUrl/"
                             this.headers = mapOf(
                                 "Origin" to mainUrl,
@@ -163,7 +167,7 @@ class RouVideo : MainAPI() {
                 }
             }
 
-            // 2. Fallback: Parse OpenGraph meta image token hash
+            // Fallback: Parse OpenGraph image token hash if API fails
             val document = app.get(data, headers = headers).document
             val ogImage = document.select("meta[property=og:image]").attr("content")
             val hashMatch = Regex("/m/([a-zA-Z0-9_-]{20,})/").find(ogImage)
