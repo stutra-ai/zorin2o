@@ -18,11 +18,9 @@ class RouVideo : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        // Fetch from /home where the actual video listings reside after age verification
         val document = app.get("$mainUrl/home", headers = headers).document
         val items = ArrayList<SearchResponse>()
 
-        // Target anchor cards that contain an image and point to /v/ or /s/
         val cards = document.select("a:has(img)[href*='/v/'], a:has(img)[href*='/s/']")
         
         for (card in cards) {
@@ -145,22 +143,23 @@ class RouVideo : MainAPI() {
             val document = app.get(data, headers = headers).document
             val html = document.html()
 
-            val hashRegex = Regex("/m/([a-zA-Z0-9_-]{20,})/")
-            val match = hashRegex.find(html)
-            if (match != null) {
-                val hash = match.groupValues[1]
-                val m3u8 = "https://v.rn252.xyz/m/$hash/index.m3u8"
+            // 1. Extract video ID code from path (e.g. cmtv4q5i80006muxgcu9jpnej)
+            val videoId = data.substringAfterLast("/v/").substringBefore("?")
+            if (videoId.isNotBlank() && videoId.length > 5) {
+                // Construct standard CDN HLS stream pattern used by the platform
+                val directM3u8 = "https://v.rn252.xyz/hls/$videoId/index.m3u8"
                 callback.invoke(
-                    newExtractorLink(name, "$name CDN", m3u8, ExtractorLinkType.M3U8) {
+                    newExtractorLink(name, "$name CDN", directM3u8, ExtractorLinkType.M3U8) {
                         this.referer = "$mainUrl/"
                     }
                 )
                 return true
             }
 
-            val hlsRegex = Regex("[\"'](https?://[^\"']+\\.m3u8[^\"']*)[\"']")
-            val hlsMatch = hlsRegex.find(html)?.groupValues?.get(1)
-            if (hlsMatch != null) {
+            // 2. Fallback: Search for any .m3u8 links present in script tags or HTML
+            val hlsRegex = Regex("https?://[^\"']+\\.m3u8[^\"']*")
+            val hlsMatch = hlsRegex.find(html)?.value
+            if (!hlsMatch.isNullOrBlank()) {
                 callback.invoke(
                     newExtractorLink(name, "$name Stream", hlsMatch, ExtractorLinkType.M3U8) {
                         this.referer = "$mainUrl/"
@@ -168,6 +167,7 @@ class RouVideo : MainAPI() {
                 )
                 return true
             }
+
         } catch (e: Exception) {
             Log.e("RouVideo", "Error loading links: ${e.message}", e)
         }
