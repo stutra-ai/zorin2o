@@ -5,14 +5,13 @@ import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
 import android.util.Log
 import com.fasterxml.jackson.annotation.JsonProperty
-import com.lagradost.cloudstream3.LoadResponse.Companion.addEpisodes
 
 class RouVideo : MainAPI() {
     override var mainUrl = "https://rou.video"
     override var name = "Rou.video"
     override val hasMainPage = true
     override var lang = "zh"
-    override val hasQuickSearch = false
+    override val hasQuickSearch = true
     override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie)
 
     private val mainHeaders = mapOf(
@@ -30,17 +29,14 @@ class RouVideo : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val document = app.get(request.data, headers = mainHeaders).document
-        
-        // Next.js state data extraction from script#__NEXT_DATA__
         val scriptContent = document.select("script#__NEXT_DATA__").html()
         val homeList = mutableListOf<SearchResponse>()
 
         try {
             if (scriptContent.isNotBlank()) {
-                val parsedJson = parseJson<NextDataRoot>(scriptContent)
+                val parsedJson = app.parseJson<NextDataRoot>(scriptContent)
                 val pageProps = parsedJson.props?.pageProps
                 
-                // Extract items from available lists in Next.js state
                 val rawItems = pageProps?.heroRanking ?: pageProps?.rankedSeries ?: pageProps?.latestVideos ?: emptyList()
                 
                 for (item in rawItems) {
@@ -67,7 +63,6 @@ class RouVideo : MainAPI() {
             }
         } catch (e: Exception) {
             Log.d("kraptor_$name", "Error parsing Next.js data: ${e.message}")
-            // Fallback to DOM parsing if JSON parsing fails
             val domItems = document.select("div.video-item, .item-card")
             for (element in domItems) {
                 val link = element.selectFirst("a") ?: continue
@@ -94,12 +89,12 @@ class RouVideo : MainAPI() {
         )
     }
 
-    override suspend fun search(query: String, page: Int): SearchResponseList {
+    override suspend fun search(query: String): List<SearchResponse> {
         val url = "$mainUrl/search?q=$query"
         val document = app.get(url, headers = mainHeaders).document
         val items = document.select("div.video-item, article")
         
-        val results = items.mapNotNull { element ->
+        return items.mapNotNull { element ->
             val link = element.selectFirst("a") ?: return@mapNotNull null
             val href = fixUrlNull(link.attr("href")) ?: return@mapNotNull null
             val title = element.selectFirst(".title, h3")?.text()?.trim() ?: return@mapNotNull null
@@ -110,11 +105,9 @@ class RouVideo : MainAPI() {
                 this.posterHeaders = mainHeaders
             }
         }
-
-        return newSearchResponseList(results, hasNext = results.isNotEmpty())
     }
 
-    override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query, 1).list
+    override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query)
 
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url, headers = mainHeaders).document
@@ -123,18 +116,16 @@ class RouVideo : MainAPI() {
         val poster = fixUrlNull(document.selectFirst("meta[property=og:image]")?.attr("content"))
         val description = document.selectFirst("meta[name=description]")?.attr("content") ?: ""
 
-        // Check if it's a series with multiple episodes or single video
         val episodeElements = document.select("div.episode-list a, .episodes-grid button")
         
         if (episodeElements.isNotEmpty()) {
             val episodes = episodeElements.mapIndexed { index, element ->
                 val epHref = fixUrlNull(element.attr("href")) ?: url
                 val epNum = element.text().trim().toIntOrNull() ?: (index + 1)
-                Episode(
-                    data = epHref,
-                    name = "第 ${epNum} 集",
+                newEpisode(epHref) {
+                    name = "第 ${epNum} 集"
                     episode = epNum
-                )
+                }
             }
             return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
                 this.posterUrl = poster
@@ -158,7 +149,6 @@ class RouVideo : MainAPI() {
     ): Boolean {
         val document = app.get(data, headers = mainHeaders).document
         
-        // Extract video folder / m3u8 stream path from scripts or attributes
         val folderAttr = document.selectFirst("[data-folder]")?.attr("data-folder")
         if (!folderAttr.isNullOrBlank()) {
             val videoUrl = "https://v.rn252.xyz/m/$folderAttr/index.m3u8"
@@ -175,7 +165,6 @@ class RouVideo : MainAPI() {
             return true
         }
 
-        // Fallback: check raw scripts for m3u8 links
         val scriptText = document.select("script").html()
         val hlsRegex = Regex("[\"'](https?://[^\"']+\\.m3u8[^\"']*)[\"']")
         val match = hlsRegex.find(scriptText)?.groupValues?.get(1)
@@ -197,7 +186,6 @@ class RouVideo : MainAPI() {
         return false
     }
 
-    // Data classes for Next.js JSON state parsing
     data class NextDataRoot(
         @JsonProperty("props") val props: Props? = null
     )
