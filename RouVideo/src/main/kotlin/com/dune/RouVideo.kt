@@ -34,13 +34,9 @@ class RouVideo : MainAPI() {
                 
                 if (videoItems.none { it.url == watchUrl }) {
                     videoItems.add(
-                        MovieSearchResponse(
-                            name = "影片 $folderHash",
-                            url = watchUrl,
-                            apiName = name,
-                            type = TvType.Movie,
-                            posterUrl = posterUrl
-                        )
+                        newMovieSearchResponse("影片 $folderHash", watchUrl, TvType.Movie) {
+                            this.posterUrl = posterUrl
+                        }
                     )
                 }
             }
@@ -63,12 +59,7 @@ class RouVideo : MainAPI() {
             
             if (searchResults.none { it.url == fullUrl } && href.contains("/v/")) {
                 searchResults.add(
-                    MovieSearchResponse(
-                        name = title,
-                        url = fullUrl,
-                        apiName = name,
-                        type = TvType.Movie
-                    )
+                    newMovieSearchResponse(title, fullUrl, TvType.Movie)
                 )
             }
         }
