@@ -115,20 +115,18 @@ class RouVideo : MainAPI() {
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url, headers = mainHeaders).document
 
-        val title = document.selectFirst("h2, h1.title, h1")?.text()?.trim() ?: "Unknown"
-        val poster = fixUrlNull(document.selectFirst("video")?.attr("poster") ?: document.selectFirst("meta[property=og:image]")?.attr("content"))
+        val title = document.selectFirst("h1.title, h1")?.text()?.trim() ?: "Unknown"
+        val poster = fixUrlNull(document.selectFirst("meta[property=og:image]")?.attr("content"))
         val description = document.selectFirst("meta[name=description]")?.attr("content") ?: ""
 
-        val episodeElements = document.select("div.max-h-\\[280px\\] a, div.episode-list a, .episodes-grid button")
+        val episodeElements = document.select("div.episode-list a, .episodes-grid button")
         
         if (episodeElements.isNotEmpty()) {
             val episodes = episodeElements.mapIndexed { index, element ->
                 val epHref = fixUrlNull(element.attr("href")) ?: url
-                val epText = element.selectFirst(".truncate")?.text() ?: element.text()
-                val epNum = epText.filter { it.isDigit() }.toIntOrNull() ?: (index + 1)
-                
+                val epNum = element.text().trim().toIntOrNull() ?: (index + 1)
                 newEpisode(epHref) {
-                    name = epText.ifBlank { "第 ${epNum} 集" }
+                    name = "第 ${epNum} 集"
                     episode = epNum
                 }
             }
@@ -154,28 +152,20 @@ class RouVideo : MainAPI() {
     ): Boolean {
         val document = app.get(data, headers = mainHeaders).document
         
-        val posterAttr = document.selectFirst("video.rv-player-video")?.attr("poster")
-
-        if (!posterAttr.isNullOrBlank() && posterAttr.contains("/m/")) {
-            try {
-                val regex = Regex("/m/([^/]+)/")
-                val match = regex.find(posterAttr)
-                if (match != null) {
-                    val folderHash = match.groupValues[1]
-                    val m3u8Url = "https://v.rn252.xyz/m/$folderHash/index.m3u8"
-                    callback.invoke(
-                        newExtractorLink(
-                            source = name,
-                            name = "$name CDN",
-                            url = m3u8Url,
-                            type = ExtractorLinkType.M3U8
-                        ) {
-                            this.referer = "$mainUrl/"
-                        }
-                    )
-                    return true
+        val folderAttr = document.selectFirst("[data-folder]")?.attr("data-folder")
+        if (!folderAttr.isNullOrBlank()) {
+            val videoUrl = "https://v.rn252.xyz/m/$folderAttr/index.m3u8"
+            callback.invoke(
+                newExtractorLink(
+                    source = name,
+                    name = "$name CDN",
+                    url = videoUrl,
+                    type = ExtractorLinkType.M3U8
+                ) {
+                    this.referer = "$mainUrl/"
                 }
-            } catch (_: Exception) {}
+            )
+            return true
         }
 
         val scriptText = document.select("script").html()
