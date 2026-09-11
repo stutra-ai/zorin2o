@@ -140,20 +140,27 @@ class RouVideo : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         try {
+            val reqHeaders = headers.toMutableMap().apply {
+                put("Referer", data)
+                put("Accept", "*/*")
+            }
+
+            // Step 1: Visit the watch page to seed cookies and establish session state
+            val document = app.get(data, headers = reqHeaders).document
+
+            // Step 2: Request the API route using the established session
             val videoId = data.substringAfterLast("/v/").substringBefore("?")
             if (videoId.isNotBlank()) {
                 val apiUrl = "$mainUrl/api/hls/$videoId"
-                
-                val reqHeaders = headers.toMutableMap().apply {
-                    put("Referer", data)
-                    put("Accept", "*/*")
-                }
-
-                // Automatically follow redirects and capture the final resolved CDN URL
                 val response = app.get(apiUrl, headers = reqHeaders)
-                val finalUrl = response.url
+                var finalUrl = response.url
 
-                if (finalUrl.isNotBlank() && !finalUrl.contains("/api/hls/")) {
+                if (finalUrl.isNotBlank() && !finalUrl.contains("/api/hls/") && !finalUrl.contains("rou.video")) {
+                    // Replace disguised .png extension with .m3u8 so ExoPlayer parses it correctly as HLS
+                    if (finalUrl.contains("index.png")) {
+                        finalUrl = finalUrl.replace("index.png", "index.m3u8")
+                    }
+
                     callback.invoke(
                         newExtractorLink(name, "$name CDN", finalUrl, ExtractorLinkType.M3U8) {
                             this.referer = "$mainUrl/"
@@ -167,8 +174,7 @@ class RouVideo : MainAPI() {
                 }
             }
 
-            // Fallback: Parse OpenGraph image token hash if API fails
-            val document = app.get(data, headers = headers).document
+            // Step 3: Fallback extraction via OpenGraph image hash token
             val ogImage = document.select("meta[property=og:image]").attr("content")
             val hashMatch = Regex("/m/([a-zA-Z0-9_-]{20,})/").find(ogImage)
             
