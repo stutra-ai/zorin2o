@@ -153,20 +153,16 @@ class RouVideo : MainAPI() {
             if (videoId.isNotBlank()) {
                 val apiUrl = "$mainUrl/api/hls/$videoId"
                 val response = app.get(apiUrl, headers = reqHeaders)
-                var finalUrl = response.url
+                val finalUrl = response.url
 
                 if (finalUrl.isNotBlank() && !finalUrl.contains("/api/hls/") && !finalUrl.contains("rou.video")) {
-                    // Replace disguised .png extension with .m3u8 so ExoPlayer parses it correctly as HLS
-                    if (finalUrl.contains("index.png")) {
-                        finalUrl = finalUrl.replace("index.png", "index.m3u8")
-                    }
-
                     callback.invoke(
                         newExtractorLink(name, "$name CDN", finalUrl, ExtractorLinkType.M3U8) {
                             this.referer = "$mainUrl/"
                             this.headers = mapOf(
                                 "Origin" to mainUrl,
-                                "Referer" to "$mainUrl/"
+                                "Referer" to "$mainUrl/",
+                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                             )
                         }
                     )
