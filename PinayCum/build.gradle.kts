@@ -1,0 +1,15 @@
+//plugins {
+    // Make sure the Cloudstream extension plugin is applied here
+ //   id("com.lagradost.cloudstream3.gradle") // Use the template's current version
+//}
+
+version = 1.1
+
+cloudstream {
+    authors     = listOf("Dune")
+    language    = "tl"
+    description = "PinayCum.tv - Filipino / Pinay adult videos"
+    status      = 1
+    tvTypes     = listOf("NSFW")
+    iconUrl     = "https://pinaycum.tv/favicon.ico"
+}
