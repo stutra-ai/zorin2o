@@ -146,30 +146,37 @@ class RouVideo : MainAPI() {
             }
 
             // Step 1: Visit the watch page to seed cookies and establish session state
-            app.get(data, headers = reqHeaders)
+            val document = app.get(data, headers = reqHeaders).document
 
             // Step 2: Request the API route using the established session
             val videoId = data.substringAfterLast("/v/").substringBefore("?")
             if (videoId.isNotBlank()) {
                 val apiUrl = "$mainUrl/api/hls/$videoId"
                 val response = app.get(apiUrl, headers = reqHeaders)
-                val finalUrl = response.url
+                var finalUrl = response.url
 
                 if (finalUrl.isNotBlank() && !finalUrl.contains("/api/hls/") && !finalUrl.contains("rou.video")) {
-                    // Keep original .png URL format required by CDN, force M3U8 handling via ExoPlayer
+                    // Replace disguised .png extension with .m3u8 so ExoPlayer parses it correctly as HLS
+                    if (finalUrl.contains("index.png")) {
+                        finalUrl = finalUrl.replace("index.png", "index.m3u8")
+                    }
+
                     callback.invoke(
                         newExtractorLink(name, "$name CDN", finalUrl, ExtractorLinkType.M3U8) {
                             this.referer = "$mainUrl/"
                             this.headers = mapOf(
                                 "Origin" to mainUrl,
-                                "Referer" to "$mainUrl/",
-                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                                "Referer" to "$mainUrl/"
                             )
                         }
                     )
                     return true
                 }
             }
+
+            // Step 3: Fallback extraction via OpenGraph image hash token
+            val ogImage = document.select("meta[property=og:image]").attr("content")
+            val hashMatch = Regex("/m/([a-zA-Z0-9_-]{20,})/").find(ogImage)
 
         } catch (e: Throwable) {
             Log.e("RouVideo", "Error loading links: ${e.localizedMessage}", e)
