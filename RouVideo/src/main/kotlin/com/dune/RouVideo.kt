@@ -140,41 +140,41 @@ class RouVideo : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         try {
-            val reqHeaders = headers.toMutableMap().apply {
-                put("Referer", data)
-                put("Accept", "application/json, text/javascript, */*; q=0.01")
-                put("X-Requested-With", "XMLHttpRequest")
-                put("Content-Type", "application/json")
-            }
-
             val videoId = data.substringAfterLast("/v/").substringBefore("?")
             if (videoId.isBlank()) return false
 
-            // Step 1: Visit the watch page to establish session cookies and parse page elements
-            val document = app.get(data, headers = reqHeaders).document
+            val siteHeaders = mapOf(
+                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Referer" to data,
+                "Accept" to "application/json, text/javascript, */*; q=0.01",
+                "X-Requested-With" to "XMLHttpRequest",
+                "Content-Type" to "application/json",
+                "Cookie" to "age_verified=true; adult=true; override_age=1"
+            )
 
-            // Step 2: Extract tags dynamically to build the required JSON payload body
+            // Step 1: Visit watch page and parse dynamic tags for the POST body
+            val document = app.get(data, headers = siteHeaders).document
             val tags = document.select(".tags a, .badge, [class*='tag'], [class*='genre']").map { it.text().trim() }.filter { it.isNotBlank() }
-            val payload = mapOf("tags" to if (tags.isNotEmpty()) tags else listOf("AI短劇"))
-
-            // Step 3: Execute the POST /play handshake with the tag payload
-            val playUrl = "$mainUrl/api/v/$videoId/play"
-            Log.d("RouVideo", "Executing play handshake with tags: $tags")
-            app.post(playUrl, headers = reqHeaders, json = payload)
-
-            // Step 4: Request the HLS API route to retrieve the authorized stream redirect URL
-            val apiUrl = "$mainUrl/api/hls/$videoId"
-            Log.d("RouVideo", "Requesting API URL: $apiUrl")
             
-            val response = app.get(apiUrl, headers = reqHeaders)
+            val jsonTags = if (tags.isNotEmpty()) tags.joinToString(prefix = "[", postfix = "]") { "\"$it\"" } else "[\"AI短劇\"]"
+            val jsonBody = "{\"tags\":$jsonTags}"
+
+            // Step 2: Execute the POST /play handshake to authorize the stream session
+            val playUrl = "$mainUrl/api/v/$videoId/play"
+            Log.d("RouVideo", "Executing play handshake: $playUrl with body: $jsonBody")
+            app.post(playUrl, headers = siteHeaders, requestBody = createAppRequestBody(jsonBody))
+
+            // Step 3: Request the HLS API route to get the CDN redirect URL
+            val apiUrl = "$mainUrl/api/hls/$videoId"
+            val response = app.get(apiUrl, headers = siteHeaders)
             var streamUrl = response.url
 
-            // Step 5: Convert the index.png mask to index.m3u8 playlist
+            // Step 4: Swap index.png mask for index.m3u8 playlist
             if (streamUrl.contains("index.png")) {
                 streamUrl = streamUrl.replace("index.png", "index.m3u8")
             }
 
-            Log.d("RouVideo", "Authorized Stream URL: $streamUrl")
+            Log.d("RouVideo", "Resolved Stream URL: $streamUrl")
 
             if (streamUrl.isNotBlank() && streamUrl.contains(".m3u8")) {
                 callback.invoke(
@@ -183,13 +183,11 @@ class RouVideo : MainAPI() {
                         this.headers = mapOf(
                             "Origin" to mainUrl,
                             "Referer" to data,
-                            "User-Agent" to headers["User-Agent"].toString()
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                         )
                     }
                 )
                 return true
-            } else {
-                Log.e("RouVideo", "Invalid stream URL resolved: $streamUrl")
             }
 
         } catch (e: Throwable) {
