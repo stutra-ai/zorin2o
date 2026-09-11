@@ -145,38 +145,35 @@ class RouVideo : MainAPI() {
                 put("Accept", "*/*")
             }
 
-            // Step 1: Visit the watch page to seed cookies and establish session state
-            val document = app.get(data, headers = reqHeaders).document
+            // Step 1: Visit the watch page to establish session state
+            app.get(data, headers = reqHeaders)
 
-            // Step 2: Request the API route using the established session
+            // Step 2: Request the API route to trigger the CDN redirect
             val videoId = data.substringAfterLast("/v/").substringBefore("?")
             if (videoId.isNotBlank()) {
                 val apiUrl = "$mainUrl/api/hls/$videoId"
+                Log.d("RouVideo", "Requesting API URL: $apiUrl")
+                
                 val response = app.get(apiUrl, headers = reqHeaders)
-                var finalUrl = response.url
+                val finalUrl = response.url
+                Log.d("RouVideo", "Resolved Stream URL: $finalUrl")
 
                 if (finalUrl.isNotBlank() && !finalUrl.contains("/api/hls/") && !finalUrl.contains("rou.video")) {
-                    // Replace disguised .png extension with .m3u8 so ExoPlayer parses it correctly as HLS
-                    if (finalUrl.contains("index.png")) {
-                        finalUrl = finalUrl.replace("index.png", "index.m3u8")
-                    }
-
                     callback.invoke(
                         newExtractorLink(name, "$name CDN", finalUrl, ExtractorLinkType.M3U8) {
-                            this.referer = "$mainUrl/"
+                            this.referer = data // Match exact watch page referer required by CDN
                             this.headers = mapOf(
                                 "Origin" to mainUrl,
-                                "Referer" to "$mainUrl/"
+                                "Referer" to data,
+                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                             )
                         }
                     )
                     return true
+                } else {
+                    Log.e("RouVideo", "Invalid redirect URL resolved: $finalUrl")
                 }
             }
-
-            // Step 3: Fallback extraction via OpenGraph image hash token
-            val ogImage = document.select("meta[property=og:image]").attr("content")
-            val hashMatch = Regex("/m/([a-zA-Z0-9_-]{20,})/").find(ogImage)
 
         } catch (e: Throwable) {
             Log.e("RouVideo", "Error loading links: ${e.localizedMessage}", e)
