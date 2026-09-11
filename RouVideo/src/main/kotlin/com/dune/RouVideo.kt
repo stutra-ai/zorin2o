@@ -146,14 +146,17 @@ class RouVideo : MainAPI() {
             }
 
             // Step 1: Visit the watch page to seed cookies and establish session state
-            val document = app.get(data, headers = reqHeaders).document
+            app.get(data, headers = reqHeaders)
 
             // Step 2: Request the API route using the established session
             val videoId = data.substringAfterLast("/v/").substringBefore("?")
             if (videoId.isNotBlank()) {
                 val apiUrl = "$mainUrl/api/hls/$videoId"
+                Log.d("RouVideo", "Requesting API URL: $apiUrl")
+                
                 val response = app.get(apiUrl, headers = reqHeaders)
                 val finalUrl = response.url
+                Log.d("RouVideo", "Final resolved URL: $finalUrl")
 
                 if (finalUrl.isNotBlank() && !finalUrl.contains("/api/hls/") && !finalUrl.contains("rou.video")) {
                     callback.invoke(
@@ -167,27 +170,9 @@ class RouVideo : MainAPI() {
                         }
                     )
                     return true
+                } else {
+                    Log.e("RouVideo", "Failed to resolve valid CDN redirect. URL was: $finalUrl")
                 }
-            }
-
-            // Step 3: Fallback extraction via OpenGraph image hash token
-            val ogImage = document.select("meta[property=og:image]").attr("content")
-            val hashMatch = Regex("/m/([a-zA-Z0-9_-]{20,})/").find(ogImage)
-            
-            if (hashMatch != null) {
-                val hash = hashMatch.groupValues[1]
-                val streamUrl = "https://v.rn252.xyz/m/$hash/index.m3u8"
-                
-                callback.invoke(
-                    newExtractorLink(name, "$name CDN (Fallback)", streamUrl, ExtractorLinkType.M3U8) {
-                        this.referer = "$mainUrl/"
-                        this.headers = mapOf(
-                            "Origin" to mainUrl,
-                            "Referer" to "$mainUrl/"
-                        )
-                    }
-                )
-                return true
             }
 
         } catch (e: Throwable) {
