@@ -152,13 +152,11 @@ class RouVideo : MainAPI() {
             val videoId = data.substringAfterLast("/v/").substringBefore("?")
             if (videoId.isNotBlank()) {
                 val apiUrl = "$mainUrl/api/hls/$videoId"
-                Log.d("RouVideo", "Requesting API URL: $apiUrl")
-                
                 val response = app.get(apiUrl, headers = reqHeaders)
                 val finalUrl = response.url
-                Log.d("RouVideo", "Final resolved URL: $finalUrl")
 
                 if (finalUrl.isNotBlank() && !finalUrl.contains("/api/hls/") && !finalUrl.contains("rou.video")) {
+                    // Keep original .png URL format required by CDN, force M3U8 handling via ExoPlayer
                     callback.invoke(
                         newExtractorLink(name, "$name CDN", finalUrl, ExtractorLinkType.M3U8) {
                             this.referer = "$mainUrl/"
@@ -170,8 +168,6 @@ class RouVideo : MainAPI() {
                         }
                     )
                     return true
-                } else {
-                    Log.e("RouVideo", "Failed to resolve valid CDN redirect. URL was: $finalUrl")
                 }
             }
 
