@@ -150,27 +150,31 @@ class RouVideo : MainAPI() {
             val videoId = data.substringAfterLast("/v/").substringBefore("?")
             if (videoId.isBlank()) return false
 
-            // Step 1: Establish session cookies by visiting the watch page
-            app.get(data, headers = reqHeaders)
+            // Step 1: Visit the watch page to establish session cookies and parse page elements
+            val document = app.get(data, headers = reqHeaders).document
 
-            // Step 2: Execute the POST /play handshake to unlock the stream on the backend
+            // Step 2: Extract tags dynamically to build the required JSON payload body
+            val tags = document.select(".tags a, .badge, [class*='tag'], [class*='genre']").map { it.text().trim() }.filter { it.isNotBlank() }
+            val payload = mapOf("tags" to if (tags.isNotEmpty()) tags else listOf("AI短劇"))
+
+            // Step 3: Execute the POST /play handshake with the tag payload
             val playUrl = "$mainUrl/api/v/$videoId/play"
-            Log.d("RouVideo", "Executing play handshake: $playUrl")
-            app.post(playUrl, headers = reqHeaders, data = emptyMap<String, String>())
+            Log.d("RouVideo", "Executing play handshake with tags: $tags")
+            app.post(playUrl, headers = reqHeaders, json = payload)
 
-            // Step 3: Request the HLS API route to get the authorized stream redirect URL
+            // Step 4: Request the HLS API route to retrieve the authorized stream redirect URL
             val apiUrl = "$mainUrl/api/hls/$videoId"
             Log.d("RouVideo", "Requesting API URL: $apiUrl")
             
             val response = app.get(apiUrl, headers = reqHeaders)
             var streamUrl = response.url
 
-            // Step 4: Swap out the index.png mask for the real index.m3u8 playlist
+            // Step 5: Convert the index.png mask to index.m3u8 playlist
             if (streamUrl.contains("index.png")) {
                 streamUrl = streamUrl.replace("index.png", "index.m3u8")
             }
 
-            Log.d("RouVideo", "Resolved Stream URL: $streamUrl")
+            Log.d("RouVideo", "Authorized Stream URL: $streamUrl")
 
             if (streamUrl.isNotBlank() && streamUrl.contains(".m3u8")) {
                 callback.invoke(
