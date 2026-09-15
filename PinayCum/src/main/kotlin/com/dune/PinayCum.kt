@@ -6,7 +6,7 @@ import org.jsoup.nodes.Element
 import java.util.Locale
 
 class PinayCum : MainAPI() {
-    override var mainUrl = "https://pinaycumvid.xyz"
+    override var mainUrl = "https://pinaycumvids.xyz"
     override var name = "PinayCum"
     override val supportedTypes = setOf(TvType.NSFW)
     override var lang = "tl"
@@ -83,10 +83,9 @@ class PinayCum : MainAPI() {
           ?: imgEl?.attr("src")
 
         if (poster != null && (poster.contains("style-853x480.png") || poster.contains("assets/img"))) {
-            val videoId = Regex("""id=(\d+)""").find(href)?.groupValues?.get(1)
-            poster = videoId?.let {
-                "https://pinaycumvid.xyz/contents/videos_screenshots/${it.toInt() / 1000 * 1000}/$it/preview.mp4.jpg"
-            }
+            val videoId = Regex("""id=([^&]+)""").find(href)?.groupValues?.get(1)
+            // Fallback screen extraction based on pathing
+            poster = "https://pinaycumvids.lol/contents/videos_screenshots/preview.mp4.jpg"
         }
 
         if (poster != null) {
@@ -133,13 +132,12 @@ class PinayCum : MainAPI() {
         var found = false
         val processedUrls = mutableSetOf<String>()
 
-        // Core extraction function to scrape the direct stream file inside target players
         suspend fun extractDirectStream(embedUrl: String, sourceName: String): Boolean {
             val cleanEmbed = embedUrl.replace("/d/", "/e/").replace("/f/", "/e/")
             if (!processedUrls.add(cleanEmbed)) return false
             
             return try {
-                if (cleanEmbed.contains("dood") || cleanEmbed.contains("ds2play")) {
+                if (cleanEmbed.contains("dood") || cleanEmbed.contains("ds2play") || cleanEmbed.contains("lulu") || cleanEmbed.contains("ruby")) {
                     return loadExtractor(cleanEmbed, data, subtitleCallback, callback)
                 }
 
@@ -151,7 +149,7 @@ class PinayCum : MainAPI() {
                     callback(
                         newExtractorLink(
                             source = sourceName,
-                            name = "$sourceName Manual Direct",
+                            name = "$sourceName Direct",
                             url = streamUrl,
                             type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                         )
@@ -165,42 +163,33 @@ class PinayCum : MainAPI() {
             }
         }
 
-        // Strategy 1: Find the explicit download button address if visible in source
-        document.select("a[href*='vidarax.cc/d/']").forEach { element ->
-            val href = element.attr("href")
-            if (extractDirectStream(fixUrl(href), "Vidara Download")) found = true
-        }
-
-        // Strategy 2: Generate direct player domain links by reading parameters inside button attributes
+        // Parse target server elements matching your exact console signature: watch.php?id=XYZ&s=SERVER
         document.select("a[href*='id='][href*='s=']").forEach { element ->
             val href = element.attr("href")
             val id = Regex("""id=([^&]+)""").find(href)?.groupValues?.get(1)
             val server = Regex("""s=([^&]+)""").find(href)?.groupValues?.get(1)
 
             if (!id.isNullOrEmpty() && !server.isNullOrEmpty()) {
-                // Generate absolute player destinations bypassing site query parameters
                 val targetEmbed = when (server.lowercase(Locale.ROOT)) {
                     "vidara" -> "https://vidarax.cc/e/$id"
-                    "lulustream" -> "https://lulustream.com/e/$id"
-                    "streamruby" -> "https://streamruby.com/e/$id"
-                    "doodstream" -> "https://doodstream.com/e/$id"
-                    else -> null
+                    "lulustream", "lulu" -> "https://lulustream.com/e/$id"
+                    "streamruby", "ruby" -> "https://streamruby.com/e/$id"
+                    "doodstream", "dood" -> "https://doodstream.com/e/$id"
+                    else -> "https://vidarax.cc/e/$id"
                 }
                 
-                if (targetEmbed != null) {
-                    val capitalizedServer = server.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() }
-                    if (extractDirectStream(targetEmbed, capitalizedServer)) {
-                        found = true
-                    }
+                val capitalizedServer = server.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() }
+                if (extractDirectStream(targetEmbed, capitalizedServer)) {
+                    found = true
                 }
             }
         }
 
-        // Strategy 3: Dynamic fallback if button rules fail
-        if (!found) {
-            val rawHtml = document.toString()
-            Regex("""https?://[^"'\s>]+(?:vidara|lulu|ruby|dood|ds2play)[^"'\s>]+""").findAll(rawHtml).map { it.value }.forEach { url ->
-                if (extractDirectStream(url, "Backup Server")) found = true
+        // Fallback for direct download link cards found in the console scan (e.g. vidwara.fit)
+        document.select("a[href*='/d/'], a[href*='/e/']").forEach { element ->
+            val href = element.attr("href")
+            if (extractDirectStream(fixUrl(href), "Direct Backup")) {
+                found = true
             }
         }
 
