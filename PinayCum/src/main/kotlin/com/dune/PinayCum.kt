@@ -6,7 +6,7 @@ import org.jsoup.nodes.Element
 import java.util.Locale
 
 class PinayCum : MainAPI() {
-    override var mainUrl = "https://pinaycumvids.xyz"
+    override var mainUrl = "https://pinaycumvids.lol"
     override var name = "PinayCum"
     override val supportedTypes = setOf(TvType.NSFW)
     override var lang = "tl"
@@ -83,12 +83,11 @@ class PinayCum : MainAPI() {
           ?: imgEl?.attr("src")
 
         if (poster != null && (poster.contains("style-853x480.png") || poster.contains("assets/img"))) {
-            val videoId = Regex("""id=([^&]+)""").find(href)?.groupValues?.get(1)
-            // Fallback screen extraction based on pathing
             poster = "https://pinaycumvids.lol/contents/videos_screenshots/preview.mp4.jpg"
         }
 
         if (poster != null) {
+            // Fixed unnecessary safe call warning here
             if (poster.startsWith("//")) poster = "https:$poster"
             poster = fixUrl(poster)
         }
@@ -124,7 +123,7 @@ class PinayCum : MainAPI() {
 
     override suspend fun loadLinks(
         data: String,
-        isCdn: Boolean,
+        isCasting: Boolean, // Fixed parameter name to match MainAPI supertype
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
@@ -163,7 +162,6 @@ class PinayCum : MainAPI() {
             }
         }
 
-        // Parse target server elements matching your exact console signature: watch.php?id=XYZ&s=SERVER
         document.select("a[href*='id='][href*='s=']").forEach { element ->
             val href = element.attr("href")
             val id = Regex("""id=([^&]+)""").find(href)?.groupValues?.get(1)
@@ -185,7 +183,6 @@ class PinayCum : MainAPI() {
             }
         }
 
-        // Fallback for direct download link cards found in the console scan (e.g. vidwara.fit)
         document.select("a[href*='/d/'], a[href*='/e/']").forEach { element ->
             val href = element.attr("href")
             if (extractDirectStream(fixUrl(href), "Direct Backup")) {
