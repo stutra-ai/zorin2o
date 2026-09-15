@@ -135,21 +135,20 @@ class PinayCum : MainAPI() {
             if (!processedUrls.add(cleanEmbed)) return false
             
             return try {
-                // Try built-in extractor first
                 if (loadExtractor(cleanEmbed, data, subtitleCallback, callback)) {
                     true
                 } else {
-                    // Fetch with explicit headers to bypass basic blocks
                     val embedResponse = app.get(
                         cleanEmbed, 
                         headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                             "Referer" to mainUrl
                         )
                     ).text
 
                     val streamUrl = Regex("""["'](https?://[^"']+\.(?:m3u8|mp4)[^"']*)["']""").find(embedResponse)?.groupValues?.get(1)
-                    
+                        ?: Regex("""sources\s*:\s*\[\s*\{\s*file\s*:\s*["']([^"']+)["']""").find(embedResponse)?.groupValues?.get(1)
+
                     if (streamUrl != null) {
                         val isM3u8 = streamUrl.contains(".m3u8")
                         callback(
@@ -166,19 +165,18 @@ class PinayCum : MainAPI() {
                     }
                 }
             } catch (e: Exception) {
-                // Check Logcat for any specific exception (e.g., Cloudflare 403 blocks)
                 false
             }
         }
-        // 1. Parse buttons containing server parameters (id & s)
-        document.select("a[href*='id='][href*='s=']").forEach { element ->
+
+        // 1. Parse player selection buttons matching your exact HTML structure (`a.show_more`)
+        document.select("a.show_more[href*='id=']").forEach { element ->
             val href = element.attr("href")
             val id = Regex("""id=([^&]+)""").find(href)?.groupValues?.get(1)
             val server = Regex("""s=([^&]+)""").find(href)?.groupValues?.get(1)
 
-            if (!id.isNullOrEmpty() && !server.isNullOrEmpty()) {
-                val targetEmbed = when (server.lowercase(Locale.ROOT)) {
-                    "vidara" -> "https://vidwara.fit/e/$id"
+            if (!id.isNullOrEmpty()) {
+                val targetEmbed = when (server?.lowercase(Locale.ROOT)) {
                     "lulustream", "lulu" -> "https://lulustream.com/e/$id"
                     "streamruby", "ruby" -> "https://streamruby.com/e/$id"
                     "doodstream", "dood" -> "https://doodstream.com/e/$id"
@@ -188,10 +186,19 @@ class PinayCum : MainAPI() {
             }
         }
 
-        // 2. Fallback scan for any other player or download links
-        document.select("a[href*='/d/'], a[href*='/e/']").forEach { element ->
-            val href = element.attr("href")
-            if (extractLinks(fixUrl(href))) found = true
+        // 2. Fallback: Parse parameters directly from the current URL if no container buttons matched
+        if (!found) {
+            val currentId = Regex("""id=([^&]+)""").find(data)?.groupValues?.get(1)
+            val currentServer = Regex("""s=([^&]+)""").find(data)?.groupValues?.get(1)
+            if (!currentId.isNullOrEmpty()) {
+                val fallbackEmbed = when (currentServer?.lowercase(Locale.ROOT)) {
+                    "lulustream", "lulu" -> "https://lulustream.com/e/$currentId"
+                    "streamruby", "ruby" -> "https://streamruby.com/e/$currentId"
+                    "doodstream", "dood" -> "https://doodstream.com/e/$currentId"
+                    else -> "https://vidwara.fit/e/$currentId"
+                }
+                if (extractLinks(fallbackEmbed)) found = true
+            }
         }
 
         return found
