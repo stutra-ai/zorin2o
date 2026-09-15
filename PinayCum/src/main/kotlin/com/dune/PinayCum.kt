@@ -130,30 +130,33 @@ class PinayCum : MainAPI() {
         var found = false
         val processedUrls = mutableSetOf<String>()
 
-        suspend fun manualExtract(embedUrl: String, serverName: String): Boolean {
+        suspend fun fetchAndExtract(embedUrl: String, serverName: String): Boolean {
             val cleanUrl = fixUrl(embedUrl)
             if (!processedUrls.add(cleanUrl)) return false
 
             return try {
-                val embedResponse = app.get(
-                    cleanUrl, 
+                val response = app.get(
+                    cleanUrl,
                     headers = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                        "Accept-Language" to "en-US,en;q=0.9",
                         "Referer" to mainUrl
                     )
-                ).text
-
-                // Multiple deep regex patterns to find direct stream URLs manually
-                val streamUrlPatterns = listOf(
-                    Regex("""["'](https?://[^"']+\.(?:m3u8|mp4)[^"']*)["']"""),
-                    Regex("""file\s*:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']"""),
-                    Regex("""source\s*:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']"""),
-                    Regex("""sources\s*:\s*\[\s*\{\s*file\s*:\s*["']([^"']+)["']""")
                 )
+                
+                val text = response.text
+
+                val patterns = listOf(
+                    Regex("""sources\s*:\s*\[\s*\{\s*file\s*:\s*["']([^"']+)["']"""),
+                    Regex("""file\s*:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']"""),
+                    Regex("""src\s*:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']"""),
+                    Regex("""["'](https?://[^"']+\.(?:m3u8|mp4)[^"']*)["']""")
+                ]
 
                 var streamUrl: String? = null
-                for (pattern in streamUrlPatterns) {
-                    val match = pattern.find(embedResponse)?.groupValues?.get(1)
+                for (regex in patterns) {
+                    val match = regex.find(text)?.groupValues?.get(1)
                     if (!match.isNullOrEmpty()) {
                         streamUrl = match
                         break
@@ -161,14 +164,14 @@ class PinayCum : MainAPI() {
                 }
 
                 if (!streamUrl.isNullOrEmpty()) {
-                    val fixedStream = if (streamUrl.startsWith("//")) "https:$streamUrl" else streamUrl
-                    val isM3u8 = fixedStream.contains(".m3u8")
-                    
+                    val finalUrl = if (streamUrl.startsWith("//")) "https:$streamUrl" else streamUrl
+                    val isM3u8 = finalUrl.contains(".m3u8") || finalUrl.contains("m3u8")
+
                     callback(
                         newExtractorLink(
                             source = serverName,
-                            name = "$serverName Direct",
-                            url = fixedStream,
+                            name = "$serverName Video",
+                            url = finalUrl,
                             type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
                         )
                     )
@@ -181,15 +184,15 @@ class PinayCum : MainAPI() {
             }
         }
 
-        // 1. Scrape live iframes on the watch page
+        // 1. Scrape standard iframes embedded on the page
         document.select("iframe").forEach { iframe ->
             val src = iframe.attr("src").ifEmpty { iframe.attr("data-src") }
             if (!src.isNullOrEmpty() && !src.contains("ads")) {
-                if (manualExtract(src, "IFrame Player")) found = true
+                if (fetchAndExtract(src, "IFrame Player")) found = true
             }
         }
 
-        // 2. Parse server buttons (`a.show_more`) and manually crawl their target embeds
+        // 2. Parse the specific server buttons matching your HTML (`a.show_more`)
         document.select("a.show_more[href*='id=']").forEach { element ->
             val href = element.attr("href")
             val id = Regex("""id=([^&]+)""").find(href)?.groupValues?.get(1)
@@ -202,11 +205,12 @@ class PinayCum : MainAPI() {
                     "doodstream", "dood" -> "https://doodstream.com/e/$id"
                     else -> "https://vidwara.fit/e/$id"
                 }
-                if (manualExtract(targetEmbed, server.replaceFirstChar { it.uppercase() })) found = true
+                val formattedName = server.replaceFirstChar { it.uppercase() }
+                if (fetchAndExtract(targetEmbed, formattedName)) found = true
             }
         }
 
-        // 3. Fallback to current URL parameters if no buttons matched
+        // 3. Fallback to active URL parameters if selectors fail
         if (!found) {
             val currentId = Regex("""id=([^&]+)""").find(data)?.groupValues?.get(1)
             val currentServer = Regex("""s=([^&]+)""").find(data)?.groupValues?.get(1) ?: "Vidara"
@@ -217,7 +221,8 @@ class PinayCum : MainAPI() {
                     "doodstream", "dood" -> "https://doodstream.com/e/$currentId"
                     else -> "https://vidwara.fit/e/$currentId"
                 }
-                if (manualExtract(fallbackEmbed, currentServer.replaceFirstChar { it.uppercase() })) found = true
+                val formattedName = currentServer.replaceFirstChar { it.uppercase() }
+                if (fetchAndExtract(fallbackEmbed, formattedName)) found = true
             }
         }
 
