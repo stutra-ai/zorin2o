@@ -205,7 +205,7 @@ class PinayCum : MainAPI() {
                     "doodstream", "dood" -> "https://doodstream.com/e/$id"
                     else -> "https://vidwara.fit/e/$id"
                 }
-                val formattedName = if (server.isNotEmpty()) server.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() } else "Vidara"
+                val formattedName = if (server.isNotBlank()) server.replaceFirstChar { it.uppercase() } else "Vidara"
                 if (fetchAndExtract(targetEmbed, formattedName)) found = true
             }
         }
@@ -221,7 +221,7 @@ class PinayCum : MainAPI() {
                     "doodstream", "dood" -> "https://doodstream.com/e/$currentId"
                     else -> "https://vidwara.fit/e/$currentId"
                 }
-                val formattedName = if (currentServer.isNotEmpty()) currentServer.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() } else "Vidara"
+                val formattedName = if (currentServer.isNotBlank()) currentServer.replaceFirstChar { it.uppercase() } else "Vidara"
                 if (fetchAndExtract(fallbackEmbed, formattedName)) found = true
             }
         }
