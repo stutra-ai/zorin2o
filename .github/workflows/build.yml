@@ -13,6 +13,8 @@ on:
     paths-ignore:
       - '*.md'
       - '.github/workflows/**'
+      - 'repo.json'
+      - 'DomainCheck.py'
 
 jobs:
   build:
