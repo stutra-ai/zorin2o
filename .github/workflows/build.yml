@@ -46,6 +46,11 @@ jobs:
         with:
           cache-read-only: false
 
+      - name: Setup Gradle Wrapper
+        run: |
+          cd $GITHUB_WORKSPACE/src
+          gradle wrapper
+
       - name: Build Plugins
         run: |
           cd $GITHUB_WORKSPACE/src
