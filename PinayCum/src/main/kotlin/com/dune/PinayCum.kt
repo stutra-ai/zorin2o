@@ -147,12 +147,12 @@ class PinayCum : MainAPI() {
                 
                 val text = response.text
 
-                val patterns = listOf(
+                val patterns = listOf{
                     Regex("""sources\s*:\s*\[\s*\{\s*file\s*:\s*["']([^"']+)["']"""),
                     Regex("""file\s*:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']"""),
                     Regex("""src\s*:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']"""),
-                    Regex("""["'](https?://[^"']+\.(?:m3u8|mp4)[^"']*)["']""")
-                ]
+                    Regex("""["'](https?://[^"']+\.(?:m3u8|mp4)[^"']*)["']"""),
+                }
 
                 var streamUrl: String? = null
                 for (regex in patterns) {
