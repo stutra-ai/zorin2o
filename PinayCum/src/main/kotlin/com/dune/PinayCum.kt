@@ -87,7 +87,6 @@ class PinayCum : MainAPI() {
         }
 
         if (poster != null) {
-            // Fixed unnecessary safe call warning here
             if (poster.startsWith("//")) poster = "https:$poster"
             poster = fixUrl(poster)
         }
@@ -123,7 +122,7 @@ class PinayCum : MainAPI() {
 
     override suspend fun loadLinks(
         data: String,
-        isCasting: Boolean, // Fixed parameter name to match MainAPI supertype
+        isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
@@ -131,37 +130,40 @@ class PinayCum : MainAPI() {
         var found = false
         val processedUrls = mutableSetOf<String>()
 
-        suspend fun extractDirectStream(embedUrl: String, sourceName: String): Boolean {
+        suspend fun extractLinks(embedUrl: String): Boolean {
             val cleanEmbed = embedUrl.replace("/d/", "/e/").replace("/f/", "/e/")
             if (!processedUrls.add(cleanEmbed)) return false
             
             return try {
-                if (cleanEmbed.contains("dood") || cleanEmbed.contains("ds2play") || cleanEmbed.contains("lulu") || cleanEmbed.contains("ruby")) {
-                    return loadExtractor(cleanEmbed, data, subtitleCallback, callback)
-                }
-
-                val embedResponse = app.get(cleanEmbed, referer = mainUrl).text
-                val streamUrl = Regex("""["'](https?://[^"']+\.(?:m3u8|mp4)[^"']*)["']""").find(embedResponse)?.groupValues?.get(1)
-                
-                if (streamUrl != null) {
-                    val isM3u8 = streamUrl.contains(".m3u8")
-                    callback(
-                        newExtractorLink(
-                            source = sourceName,
-                            name = "$sourceName Direct",
-                            url = streamUrl,
-                            type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                        )
-                    )
+                // Leverage Cloudstream's built-in core extractors
+                if (loadExtractor(cleanEmbed, data, subtitleCallback, callback)) {
                     true
                 } else {
-                    loadExtractor(cleanEmbed, mainUrl, subtitleCallback, callback)
+                    // Fallback manual regex check if built-in extractor fails
+                    val embedResponse = app.get(cleanEmbed, referer = mainUrl).text
+                    val streamUrl = Regex("""["'](https?://[^"']+\.(?:m3u8|mp4)[^"']*)["']""").find(embedResponse)?.groupValues?.get(1)
+                    
+                    if (streamUrl != null) {
+                        val isM3u8 = streamUrl.contains(".m3u8")
+                        callback(
+                            newExtractorLink(
+                                source = "Direct Stream",
+                                name = "Backup Direct",
+                                url = streamUrl,
+                                type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+                            )
+                        )
+                        true
+                    } else {
+                        false
+                    }
                 }
-            } catch (e: Exception) { 
-                false 
+            } catch (e: Exception) {
+                false
             }
         }
 
+        // 1. Parse buttons containing server parameters (id & s)
         document.select("a[href*='id='][href*='s=']").forEach { element ->
             val href = element.attr("href")
             val id = Regex("""id=([^&]+)""").find(href)?.groupValues?.get(1)
@@ -169,25 +171,20 @@ class PinayCum : MainAPI() {
 
             if (!id.isNullOrEmpty() && !server.isNullOrEmpty()) {
                 val targetEmbed = when (server.lowercase(Locale.ROOT)) {
-                    "vidara" -> "https://vidarax.cc/e/$id"
+                    "vidara" -> "https://vidwara.fit/e/$id"
                     "lulustream", "lulu" -> "https://lulustream.com/e/$id"
                     "streamruby", "ruby" -> "https://streamruby.com/e/$id"
                     "doodstream", "dood" -> "https://doodstream.com/e/$id"
-                    else -> "https://vidarax.cc/e/$id"
+                    else -> "https://vidwara.fit/e/$id"
                 }
-                
-                val capitalizedServer = server.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() }
-                if (extractDirectStream(targetEmbed, capitalizedServer)) {
-                    found = true
-                }
+                if (extractLinks(targetEmbed)) found = true
             }
         }
 
+        // 2. Fallback scan for any other player or download links
         document.select("a[href*='/d/'], a[href*='/e/']").forEach { element ->
             val href = element.attr("href")
-            if (extractDirectStream(fixUrl(href), "Direct Backup")) {
-                found = true
-            }
+            if (extractLinks(fixUrl(href))) found = true
         }
 
         return found
