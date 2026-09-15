@@ -135,12 +135,19 @@ class PinayCum : MainAPI() {
             if (!processedUrls.add(cleanEmbed)) return false
             
             return try {
-                // Leverage Cloudstream's built-in core extractors
+                // Try built-in extractor first
                 if (loadExtractor(cleanEmbed, data, subtitleCallback, callback)) {
                     true
                 } else {
-                    // Fallback manual regex check if built-in extractor fails
-                    val embedResponse = app.get(cleanEmbed, referer = mainUrl).text
+                    // Fetch with explicit headers to bypass basic blocks
+                    val embedResponse = app.get(
+                        cleanEmbed, 
+                        headers = mapOf(
+                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                            "Referer" to mainUrl
+                        )
+                    ).text
+
                     val streamUrl = Regex("""["'](https?://[^"']+\.(?:m3u8|mp4)[^"']*)["']""").find(embedResponse)?.groupValues?.get(1)
                     
                     if (streamUrl != null) {
@@ -159,10 +166,10 @@ class PinayCum : MainAPI() {
                     }
                 }
             } catch (e: Exception) {
+                // Check Logcat for any specific exception (e.g., Cloudflare 403 blocks)
                 false
             }
         }
-
         // 1. Parse buttons containing server parameters (id & s)
         document.select("a[href*='id='][href*='s=']").forEach { element ->
             val href = element.attr("href")
