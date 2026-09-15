@@ -1,4 +1,4 @@
-package com.lagradost.cloudstream3.plugins
+package com.dune
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
@@ -11,7 +11,8 @@ class PinayCum : MainAPI() {
     override var name = "PinayCum"
     override val hasMainPage = true
     override var lang = "en"
-    override val supportedTypes = setOf(TvType.Adult)
+    // Fixed: Use NSFW for adult content types
+    override val supportedTypes = setOf(TvType.NSFW)
 
     override val mainPage = mainPageOf(
         "$mainUrl/" to "Home"
@@ -29,10 +30,12 @@ class PinayCum : MainAPI() {
 
         val document = app.get(targetUrl).document
         val home = document.select("div.col, div.swiper-slide, article, .item").mapNotNull { it.toSearchResult() }
+        val hasNext = document.select("a.next, .pagination-next, li.page-item:last-child a").isNotEmpty()
 
+        // Fixed: Correct signature for newHomePageResponse
         return newHomePageResponse(
-            list = HomePageList(request.name, home),
-            hasNextPage = document.select("a.next, .pagination-next, li.page-item:last-child a").isNotEmpty()
+            HomePageList(request.name, home),
+            hasNext
         )
     }
 
@@ -52,7 +55,7 @@ class PinayCum : MainAPI() {
                 ?: imgElement?.attr("src") ?: ""
         )
 
-        return newMovieSearchResponse(title, href, TvType.Adult) {
+        return newMovieSearchResponse(title, href, TvType.NSFW) {
             this.posterUrl = posterUrl
         }
     }
@@ -72,7 +75,7 @@ class PinayCum : MainAPI() {
         val poster = document.select("meta[property=og:image]").attr("content")
         val description = document.select(".description, .card-text, .info").text().trim()
 
-        return newMovieLoadResponse(title, url, TvType.Adult, url) {
+        return newMovieLoadResponse(title, url, TvType.NSFW, url) {
             this.posterUrl = poster
             this.plot = description
         }
@@ -86,16 +89,13 @@ class PinayCum : MainAPI() {
     ): Boolean {
         val document = app.get(data).document
 
-        // 1. Find all multi-server player tab buttons (e.g., Player 1, Player 2, Player 3, Player 4)
         val serverLinks = document.select("a.show_more[href*='s=']").map { fixUrl(it.attr("href")) }
         val linksToProcess = if (serverLinks.isNotEmpty()) serverLinks else listOf(data)
 
-        // 2. Loop through each server variant page to grab its specific embedded player stream
         for (serverUrl in linksToProcess) {
             try {
                 val serverDoc = if (serverUrl == data) document else app.get(serverUrl).document
 
-                // Extract iframes or embedded player source containers
                 val embeddedUrls = serverDoc.select("iframe, embed, video source, .player iframe")
                     .mapNotNull { it.attr("src").ifEmpty { it.attr("data-src") } }
 
@@ -103,7 +103,6 @@ class PinayCum : MainAPI() {
                     loadExtractor(fixUrl(embedUrl), serverUrl, subtitleCallback, callback)
                 }
 
-                // Scan script blocks for fallback video stream URLs, ignoring ad network traffic scripts
                 val scripts = serverDoc.select("script").map { it.data() }
                 for (script in scripts) {
                     Regex("""https?://[^\s"'<>]+(?:m3u8|mp4|embed|player)[^\s"'<>]*""").find(script)?.value?.let { directLink ->
@@ -112,9 +111,7 @@ class PinayCum : MainAPI() {
                         }
                     }
                 }
-            } catch (_: Exception) {
-                // Keep moving even if an individual server option fails to load
-            }
+            } catch (_: Exception) {}
         }
 
         return true
