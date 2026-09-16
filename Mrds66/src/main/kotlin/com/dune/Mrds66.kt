@@ -50,7 +50,7 @@ class Mrds66 : MainAPI() {
             targetUrl
         } else {
             val cleanBase = targetUrl.removeSuffix("/")
-            "\(cleanBase/page/\)page/"
+            "(cleanBase/page/)page/"
         }
 
         val document = app.get(url, headers = mainHeaders).document
@@ -107,7 +107,7 @@ class Mrds66 : MainAPI() {
         return newSearchResponseList(results, hasNext = hasNext)
     }
 
-    override suspend fun quickSearch(query: String): List? = search(query)
+    override suspend fun quickSearch(query: String): List? = search(query, 1)
 
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url, headers = mainHeaders).document
