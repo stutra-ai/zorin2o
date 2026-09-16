@@ -1,15 +1,29 @@
 package com.dune
 
 import android.util.Log
-import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.Actor
+import com.lagradost.cloudstream3.ExtractorLink
+import com.lagradost.cloudstream3.HomePageList
+import com.lagradost.cloudstream3.HomePageResponse
+import com.lagradost.cloudstream3.LoadResponse
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
-import com.lagradost.cloudstream3.utils.AppUtils.tryParseJsonArray
+import com.lagradost.cloudstream3.MainAPI
+import com.lagradost.cloudstream3.MainPageRequest
+import com.lagradost.cloudstream3.SearchResponse
+import com.lagradost.cloudstream3.SearchResponseList
+import com.lagradost.cloudstream3.SubtitleFile
+import com.lagradost.cloudstream3.TvType
+import com.lagradost.cloudstream3.app
+import com.lagradost.cloudstream3.fixUrlNull
+import com.lagradost.cloudstream3.mainPageOf
+import com.lagradost.cloudstream3.newHomePageResponse
+import com.lagradost.cloudstream3.newMovieLoadResponse
+import com.lagradost.cloudstream3.newMovieSearchResponse
+import com.lagradost.cloudstream3.newSearchResponseList
+import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.newExtractorLink
-import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
-import org.json.JSONObject
-import java.net.URI
 
 class Mrds66 : MainAPI() {
 
@@ -23,7 +37,7 @@ class Mrds66 : MainAPI() {
     private val mainHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language" to "zh-CN,zh;q=0.9",
+        "Accept-Language" to "zh-CN,zh;q=0.9,en;q=0.8",
         "Referer" to "$mainUrl/",
         "Sec-Ch-Ua" to "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"",
         "Sec-Ch-Ua-Mobile" to "?0",
@@ -31,6 +45,8 @@ class Mrds66 : MainAPI() {
         "Upgrade-Insecure-Requests" to "1"
     )
 
+    // NOTE: some slugs (blyp -> /archives/37/) are posts, not categories.
+    // getMainPage already falls back to card-scraping when there is no grid, so this is safe.
     override val mainPage = mainPageOf(
         mainUrl to "首页",
         "$mainUrl/category/mrds/" to "每日大赛",
@@ -55,125 +71,162 @@ class Mrds66 : MainAPI() {
         "$mainUrl/category/aijc/" to "AI剧场"
     )
 
+    // ---------- homepage ----------
+
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = if (page == 1) "${request.data}/" else "${request.data}page/$page/"
-        
-        Log.d("Mrds66", "Fetching page: $url")
+        // ZblogPHP pagination: /page/N/. Category URLs already end in "/", page 1 == category root.
+        val url = if (page == 1) {
+            request.data
+        } else {
+            "${request.data.trimEnd('/')}/$page/".let { s ->
+                if (request.data.endsWith("/")) "${request.data}page/$page/" else s
+            }
+        }
+
+        Log.d("kraptor_$name", "MainPage URL: $url")
 
         val document = try {
             app.get(url, headers = mainHeaders).document
         } catch (e: Exception) {
-            Log.e("Mrds66", "Page fetch failed: ${e.message}")
-            return newHomePageResponse(request.name, emptyList(), hasNext = false)
+            Log.e("kraptor_$name", "MainPage failed: ${e.message}")
+            return newHomePageResponse(request.name, emptyList<SearchResponse>(), hasNext = false)
         }
 
-        // Homepage cards selector (based on structure analysis, likely a grid or list)
-        // Since we didn't get the exact class from the script output, we try common ZblogPHP patterns
+        // Listing pages use a different markup than the single post page (article.post),
+        // so we cast a wide net and de-dupe below.
         val items = document.select(
-            "div.loglist div.item, div.post, article.post, div.video-block, div.card, div.list-item"
+            "#post-list > *, .loglist > *, .post-list > *, .index-list > *, " +
+                ".list > article, .excerpt, .post-item, .log-list li, article"
         )
 
-        val home = items.mapNotNull { it.toSearchResponse() }
+        val home = LinkedHashSet<SearchResponse>()
+        items.forEach { el ->
+            el.toSearchResponse()?.let { home.add(it) }
+            // Some themes wrap <article> inside a container div; try children too.
+            el.children().forEach { child ->
+                child.toSearchResponse()?.let { home.add(it) }
+            }
+        }
 
+        val list = home.toList()
         return newHomePageResponse(
-            list = HomePageList(
-                name = request.name,
-                list = home,
-                isHorizontalImages = true
-            ),
-            hasNext = home.isNotEmpty()
+            list = HomePageList(request.name, list, isHorizontalImages = true),
+            hasNext = list.isNotEmpty()
         )
     }
 
     private fun Element.toSearchResponse(): SearchResponse? {
-        // Try to find the link and title
-        val linkElement = this.selectFirst("a, a[href]")
-        if (linkElement == null) return null
+        val linkElement = this.selectFirst("h2 a, h3 a, .post-title a, h1 a, a[href]") ?: return null
 
-        val href = linkElement.attr("href").ifBlank { return null }
-        
-        // Skip if it's not a valid video archive link
-        if (!href.contains("/archives/") && !href.contains("/category/") && !href.contains("/tag/")) return null
+        val hrefRaw = linkElement.attr("href")
+        if (!hrefRaw.contains("/archives/")) return null          // only real video posts
+        val href = fixUrlNull(hrefRaw) ?: return null
 
-        val title = this.selectFirst("h1, h2, h3, .post-title, .title")?.text()?.trim()
-            ?: linkElement.attr("title").ifBlank { linkElement.text() }?.trim()
+        val title = this.selectFirst(".post-title, h2, h3")?.text()?.trim()?.ifBlank { null }
+            ?: linkElement.attr("title").trim().ifBlank { null }
+            ?: linkElement.text().trim().ifBlank { null }
             ?: return null
 
-        // Thumbnail: Try img src or data-src
-        val imgElement = this.selectFirst("img")
-        val posterUrl = imgElement?.let {
-            fixUrlNull(it.attr("data-original") ?: it.attr("data-src") ?: it.attr("src"))
-        }
+        val img = this.selectFirst("img")
+        val poster = fixUrlNull(
+            img?.attr("src")?.takeIf { it.isNotBlank() && !it.startsWith("data:") }
+                ?: img?.attr("data-src")?.takeIf { it.isNotBlank() }
+                ?: img?.attr("data-original")?.takeIf { it.isNotBlank() }
+        )
 
         return newMovieSearchResponse(title, href, TvType.NSFW) {
-            this.posterUrl = posterUrl
+            this.posterUrl = poster
             this.posterHeaders = mainHeaders
         }
     }
 
-    override suspend fun search(query: String, page: Int): SearchResponseList {
-        val url = "$mainUrl/search/$query/page/$page/"
-        Log.d("Mrds66", "Search URL: $url")
+    // ---------- search ----------
 
-        val document = app.get(url, headers = mainHeaders).document
-        val items = document.select("div.loglist div.item, div.post, article.post")
-        
-        val results = items.mapNotNull { it.toSearchResponse() }
+    override suspend fun search(query: String, page: Int): SearchResponseList {
+        // Two known forms: schema.org advertises /search/{term}/, the <form> uses ?s=.
+        val encoded = java.net.URLEncoder.encode(query, "UTF-8")
+        val urls = listOf(
+            "$mainUrl/search/$encoded/page/$page/",
+            "$mainUrl/search/$encoded/",
+            "$mainUrl/?s=$encoded&page=$page"
+        )
+
+        val found = LinkedHashSet<SearchResponse>()
+
+        for (u in urls) {
+            try {
+                val doc = app.get(u, headers = mainHeaders).document
+                doc.select("article, .excerpt, .post-item, .loglist > *")
+                    .mapNotNull { it.toSearchResponse() }
+                    .forEach { found.add(it) }
+                if (found.isNotEmpty()) break
+            } catch (e: Exception) {
+                Log.d("kraptor_$name", "search failed on $u : ${e.message}")
+            }
+        }
+
+        val results = found.toList()
         return newSearchResponseList(results, hasNext = results.isNotEmpty())
     }
 
     override suspend fun quickSearch(query: String): List<SearchResponse>? = search(query)
 
+    // ---------- load ----------
+
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url, headers = mainHeaders).document
 
-        // Title
         val title = document.selectFirst("h1.post-title")?.text()?.trim()
             ?: document.selectFirst("h1")?.text()?.trim()
             ?: "Unknown"
 
-        // Thumbnail: Extract from Schema.org JSON-LD
-        val posterUrl = document.select("script[type='application/ld+json']").mapNotNull { script ->
-            try {
-                val json = JSONObject(script.text())
-                val videoObj = json.getJSONObject("mainEntity").getJSONObject("video")
-                videoObj.optString("thumbnailUrl", "").ifBlank { null }
-            } catch (e: Exception) {
-                null
+        // Schema.org JSON-LD carries the reliable thumbnail + duration + keywords.
+        val ldText = document.select("script[type=application/ld+json]").joinToString("\n") { it.data() }
+
+        val poster = Regex("\"thumbnailUrl\"\\s*:\\s*\"([^\"]+)\"").find(ldText)?.groupValues?.get(1)
+            ?.let { fixUrlNull(it) }
+            ?: Regex("\"image\"\\s*:\\s*\"([^\"]+)\"").find(document.html())?.groupValues?.get(1)
+                ?.let { fixUrlNull(it) }
+
+        val description = document.selectFirst(".post-content p")?.text()?.trim()?.ifBlank { null }
+            ?: Regex("\"description\"\\s*:\\s*\"([^\"]+)\"").find(ldText)?.groupValues?.get(1)
+            ?: ""
+
+        val year = Regex("\"datePublished\"\\s*:\\s*\"(20\\d{2})").find(ldText)?.groupValues?.get(1)
+            ?.toIntOrNull()
+            ?: document.selectFirst(".post-meta time")?.text()?.trim()?.let {
+                Regex("(20\\d{2})").find(it)?.groupValues?.get(1)?.toIntOrNull()
             }
-        }.firstOrNull() ?: document.selectFirst("img")?.let {
-            fixUrlNull(it.attr("data-original") ?: it.attr("src"))
+
+        val tags = document.select("a[href*=/tag/]").map { it.text().trim() }
+            .filter { it.isNotBlank() && it != "关键词：" }
+            .distinct()
+
+        val actors = document.select(".post-meta a[href*=/author/]")
+            .map { Actor(it.text().trim()) }
+            .filter { it.name.isNotBlank() }
+
+        // Prev/next links make decent recommendations.
+        val recs = LinkedHashSet<SearchResponse>()
+        document.select("a[href*=/archives/]").forEach { a ->
+            val t = a.text().replace(Regex("^\\s*(下一篇|上一篇)[:：]?\\s*"), "").trim()
+            if (t.length < 4) return@forEach
+            val h = fixUrlNull(a.attr("href")) ?: return@forEach
+            recs.add(newMovieSearchResponse(t, h, TvType.NSFW))
         }
-
-        // Description
-        val description = document.selectFirst("div.post-content")?.text()?.trim() ?: ""
-
-        // Meta
-        val yearText = document.selectFirst("time")?.text()?.trim()?.substringAfter(" ")
-            ?.substringBefore("年")?.toIntOrNull()
-
-        val tags = document.select("a[href*='/tag/']").map { it.text().trim() }
-
-        // Recommendations (Next/Prev)
-        val recommendations = document.select("a[href*='/archives/']")
-            .mapNotNull { a ->
-                val title = a.text().trim()
-                val href = fixUrlNull(a.attr("href")) ?: return@mapNotNull null
-                newMovieSearchResponse(title, href, TvType.NSFW) {
-                    this.posterUrl = null
-                }
-            }
-            .take(10)
 
         return newMovieLoadResponse(title, url, TvType.NSFW, url) {
-            this.posterUrl = posterUrl
+            this.posterUrl = poster
             this.posterHeaders = mainHeaders
             this.plot = description
-            this.year = yearText
+            this.year = year
             this.tags = tags
-            this.recommendations = recommendations
+            this.recommendations = recs.take(30)
+            addActors(actors)
         }
     }
+
+    // ---------- links ----------
 
     override suspend fun loadLinks(
         data: String,
@@ -181,69 +234,72 @@ class Mrds66 : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        Log.d("Mrds66", "Loading links for: $data")
 
-        try {
-            // Fetch the video page again to extract DPlayer config
-            val res = app.get(data, headers = mainHeaders)
-            val html = res.text
-
-            // Strategy 1: Extract DPlayer config from script tags
-            // DPlayer usually initializes like: new DPlayer({video: {url: '...'}})
-            val dplayerScript = Regex("""new DPlayer\(\{[^}]*video[^}]*\{[^}]*url[^}]*['"]([^'"]+)['"]""", RegexOption.DOTALL)
-                .find(html)
-                ?.groupValues?.get(1)
-
-            if (dplayerScript != null) {
-                Log.d("Mrds66", "Found DPlayer URL: $dplayerScript")
-                callback.invoke(
-                    newExtractorLink(
-                        source = name,
-                        name = "Mrds66 Stream",
-                        url = dplayerScript,
-                        type = if (dplayerScript.endsWith(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                    ) {
-                        this.referer = data
-                        this.headers = mainHeaders
-                    }
-                )
-                return true
-            }
-
-            // Strategy 2: Look for direct video URLs in the page (fallback)
-            val regex = Regex("""https?://[^"'<>]+\.(?:m3u8|mp4|flv)[^"'<>]*""")
-            val urls = regex.findAll(html).map { it.value }.distinct()
-            
-            urls.forEach { url ->
-                if (!url.contains("blob:") && !url.contains("advert")) {
-                    callback.invoke(
-                        newExtractorLink(
-                            source = name,
-                            name = "Mrds66 Direct",
-                            url = url,
-                            type = if (url.endsWith(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                        ) {
-                            this.referer = data
-                            this.headers = mainHeaders
-                        }
-                    )
-                }
-            }
-
-            // Strategy 3: If still no stream, try to load the page's main video embed
-            // (Some sites use a hidden iframe or an API)
-            if (urls.isEmpty()) {
-                Log.w("Mrds66", "No stream found via regex. Trying to inspect iframe or other embeds...")
-                // If the site uses a generic player, we might need to inspect the network request.
-                // For now, we return false to indicate failure.
-            }
-
-            return true
+        val html = try {
+            app.get(data, headers = mainHeaders).text
         } catch (e: Exception) {
-            Log.e("Mrds66", "Error loading links: ${e.message}")
-            e.printStackTrace()
+            Log.e("kraptor_$name", "loadLinks fetch failed: ${e.message}")
+            return false
         }
 
-        return false
+        val streams = LinkedHashSet<String>()
+
+        // 1. DPlayer init: video:{url:'...'} or url:function(){return "..."}
+        Regex("""(?:video|url)\s*:\s*(?:function\s*\(\s*\)\s*\{\s*return\s*)?["'](https?://[^"']+)["']""")
+            .findAll(html)
+            .mapNotNull { it.groupValues.getOrNull(1) }
+            .forEach { streams.add(it) }
+
+        // 2. Hls.js / plyr / videojs style assignments
+        Regex("""\.src\(\s*["'](https?://[^"']+)["']""")
+            .findAll(html)
+            .mapNotNull { it.groupValues.getOrNull(1) }
+            .forEach { streams.add(it) }
+
+        // 3. Any raw media file referenced anywhere in the document
+        Regex("""https?://[^\s"'<>\\]+?\.(?:m3u8|mp4|flv)(?:\?[^\s"'<>\\]*)?""", RegexOption.IGNORE_CASE)
+            .findAll(html)
+            .mapNotNull { it.value }
+            .forEach { streams.add(it) }
+
+        val clean = streams.filter { u ->
+            u.isNotBlank() &&
+                !u.startsWith("blob:") &&
+                !u.contains("advert", true) &&
+                !u.contains("/ads/", true) &&
+                !u.contains("analytics")
+        }
+
+        Log.d("kraptor_$name", "candidate streams: $clean")
+
+        if (clean.isEmpty()) {
+            // The page you dumped used a blob: URL, i.e. the stream is fetched by JS at runtime.
+            // If this branch triggers consistently, the URL comes from an XHR/signature endpoint
+            // and needs a network-tab capture to implement.
+            Log.w("kraptor_$name", "No static stream URL found for $data")
+            return false
+        }
+
+        clean.forEach { streamUrl ->
+            val type = when {
+                streamUrl.contains(".m3u8", true) -> ExtractorLinkType.M3U8
+                streamUrl.contains(".mpd", true) -> ExtractorLinkType.DASH
+                else -> ExtractorLinkType.VIDEO
+            }
+
+            callback.invoke(
+                newExtractorLink(
+                    source = name,
+                    name = name,
+                    url = streamUrl,
+                    type = type
+                ) {
+                    this.referer = data
+                    this.headers = mainHeaders
+                }
+            )
+        }
+
+        return true
     }
 }
