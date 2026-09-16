@@ -28,7 +28,7 @@ class Mrds66 : MainAPI() {
         "$mainUrl/category/xazd/" to "校园学生",
         "$mainUrl/category/blyp/" to "必撸大赛",
         "$mainUrl/category/fctg/" to "反差泄密",
-        "$mainUrl/category/mhds/" -> "网红黑料",
+        "$mainUrl/category/mhds/" to "网红黑料",
         "$mainUrl/category/lqdp/" to "猎奇重口",
         "$mainUrl/category/jdsj/" to "AV看片",
         "$mainUrl/category/mxwh/" to "明星大赛",
@@ -133,7 +133,7 @@ class Mrds66 : MainAPI() {
         if (title.isNullOrBlank() || title.contains("loadBannerDirect")) return null
 
         val href = fixUrlNull(this.selectFirst("a")?.attr("href")) ?: return null
-        if (href.contains("archives") != true) return null
+        if (!href.contains("archives")) return null
         
         val posterUrl = fixUrlNull(this.selectFirst("a img")?.attr("src"))
 
