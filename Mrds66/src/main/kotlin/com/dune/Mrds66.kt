@@ -1,4 +1,4 @@
-package com.mrds66
+package com.dune
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
@@ -9,7 +9,7 @@ class Mrds66 : MainAPI() {
     override var mainUrl = "https://www.mrds66.com"
     override var name = "Mrds66"
     override val supportedTypes = setOf(TvType.NSFW)
-    override val lang = "all"
+    override var lang = "all"
     override val hasMainPage = true
     override val hasQuickSearch = true
 
@@ -17,7 +17,7 @@ class Mrds66 : MainAPI() {
         "$mainUrl/" to "Latest Videos",
     )
 
-    private val targetSelectors = "article, .post, .item, .entry, div[class*='post'], div[class*='item']"
+    private val targetSelectors = "article, .post, .item, .entry"
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = if (page <= 1) request.data else "\({request.mainUrl}/page/\)page/"
@@ -116,7 +116,6 @@ class Mrds66 : MainAPI() {
         val document = app.get(data, referer = mainUrl).document
         var found = false
 
-        // Strategy 1: Regex scan for inline script configuration urls or API parameters pointing to streams
         val rawHtml = document.toString()
         val streamRegex = Regex("""["'](https?://[^"'\s>]+\.(?:m3u8|mp4)[^"'\s>]*)["']""")
         streamRegex.findAll(rawHtml).map { it.groupValues[1] }.distinct().forEach { streamUrl ->
@@ -133,7 +132,6 @@ class Mrds66 : MainAPI() {
             found = true
         }
 
-        // Strategy 2: Check standard HTML5 video tags (ignoring local runtime blobs)
         document.select("video source, video").forEach { videoTag ->
             val src = videoTag.attr("src").ifEmpty { videoTag.attr("data-src") }
             if (src.isNotEmpty() && !src.startsWith("blob:")) {
@@ -151,7 +149,6 @@ class Mrds66 : MainAPI() {
             }
         }
 
-        // Strategy 3: Check embedded player iframes
         document.select("iframe").forEach { iframe ->
             val src = iframe.attr("src").ifEmpty { iframe.attr("data-src") }
             if (src.isNotEmpty() && !src.contains("addtoany")) {
