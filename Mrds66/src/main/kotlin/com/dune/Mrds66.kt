@@ -38,20 +38,10 @@ class Mrds66 : MainAPI() {
     ): HomePageResponse {
         val baseUrl = request.data.removeSuffix("/")
 
-        val url = when {
-            page <= 1 -> request.data
-            baseUrl.endsWith("/category/mrds") ||
-            baseUrl.endsWith("/category/ztds") ||
-            baseUrl.endsWith("/category/rstt") ||
-            baseUrl.endsWith("/category/xazd") ||
-            baseUrl.endsWith("/category/blyp") ||
-            baseUrl.endsWith("/category/fctg") ||
-            baseUrl.endsWith("/category/mhds") ||
-            baseUrl.endsWith("/category/lqdp") ||
-            baseUrl.endsWith("/category/jdsj") ->
-                "\(baseUrl/page/\)page/"
-            else ->
-                "\(baseUrl/page/\)page/"
+        val url = if (page <= 1) {
+            request.data
+        } else {
+            "\(baseUrl/page/\)page/"
         }
 
         val document = app.get(
@@ -163,7 +153,7 @@ class Mrds66 : MainAPI() {
         }
 
         return this@Mrds66.newMovieSearchResponse(
-            title = title,
+            name = title,
             url = url,
             type = TvType.NSFW
         ) {
