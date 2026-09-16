@@ -1,108 +1,219 @@
-package com.dune
+package com.mrds66
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.nodes.Element
+import java.net.URLDecoder
 import java.util.Locale
 
 class Mrds66 : MainAPI() {
     override var mainUrl = "https://www.mrds66.com"
-    override var name = "Mrds66"
+    override var name = "MRDS66"
+    override var lang = "zh"
     override val supportedTypes = setOf(TvType.NSFW)
-    override var lang = "all"
     override val hasMainPage = true
     override val hasQuickSearch = true
 
     override val mainPage = mainPageOf(
-        "$mainUrl/" to "Latest Videos",
+        "$mainUrl/" to "首页",
+        "$mainUrl/category/mrds/" to "每日大赛",
+        "$mainUrl/category/ztds/" to "主题大赛",
+        "$mainUrl/category/rstt/" to "热搜吃瓜",
+        "$mainUrl/category/xazd/" to "校园学生",
+        "$mainUrl/category/blyp/" to "必撸大赛",
+        "$mainUrl/category/fctg/" to "反差泄密",
+        "$mainUrl/category/mhds/" to "网红黑料",
+        "$mainUrl/category/lqdp/" to "猎奇重口",
+        "$mainUrl/category/jdsj/" to "AV看片"
     )
 
-    private val targetSelectors = "article, .post, .item, .entry"
+    private val articleUrlRegex = Regex(
+        """/archives/\d+/?""",
+        RegexOption.IGNORE_CASE
+    )
 
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val url = if (page <= 1) request.data else "\({request.mainUrl}/page/\)page/"
-        val document = app.get(url, referer = mainUrl).document
-        
-        var items = document.select(targetSelectors).mapNotNull { 
-            it.toSearchResult() 
-        }.distinctBy { it.url }
+    override suspend fun getMainPage(
+        page: Int,
+        request: MainPageRequest
+    ): HomePageResponse {
+        val baseUrl = request.data.removeSuffix("/")
 
-        if (items.isEmpty()) {
-            items = document.select("a[href*='/archives/']").mapNotNull { it.toSearchResult() }
+        val url = when {
+            page <= 1 -> request.data
+            baseUrl.endsWith("/category/mrds") ||
+            baseUrl.endsWith("/category/ztds") ||
+            baseUrl.endsWith("/category/rstt") ||
+            baseUrl.endsWith("/category/xazd") ||
+            baseUrl.endsWith("/category/blyp") ||
+            baseUrl.endsWith("/category/fctg") ||
+            baseUrl.endsWith("/category/mhds") ||
+            baseUrl.endsWith("/category/lqdp") ||
+            baseUrl.endsWith("/category/jdsj") ->
+                "$baseUrl/page/$page/"
+            else ->
+                "$baseUrl/page/$page/"
         }
 
-        return newHomePageResponse(request.name, items, hasNext = true)
+        val document = app.get(
+            url,
+            referer = mainUrl
+        ).document
+
+        val results = extractArticles(document)
+
+        return newHomePageResponse(
+            request.name,
+            results,
+            hasNext = results.isNotEmpty()
+        )
     }
 
-    override suspend fun search(query: String, page: Int): SearchResponseList? {
-        val url = if (page <= 1) "\(mainUrl/?s=\)query" else "\(mainUrl/page/\)page/?s=$query"
-        val document = app.get(url, referer = mainUrl).document
-        
-        var results = document.select(targetSelectors).mapNotNull { 
-            it.toSearchResult() 
-        }.distinctBy { it.url }
-
-        if (results.isEmpty()) {
-            results = document.select("a[href*='/archives/']").mapNotNull { it.toSearchResult() }
+    override suspend fun search(
+        query: String,
+        page: Int
+    ): SearchResponseList? {
+        /*
+         * The site does not appear to expose a conventional search endpoint
+         * in the supplied reports. Search locally through the archive page
+         * when possible.
+         */
+        val archiveUrl = if (page <= 1) {
+            "$mainUrl/archives.html"
+        } else {
+            "$mainUrl/archives.html?page=$page"
         }
 
-        return newSearchResponseList(results, hasNext = true)
+        val document = app.get(
+            archiveUrl,
+            referer = mainUrl
+        ).document
+
+        val results = extractArticles(document).filter {
+            it.name.contains(query, ignoreCase = true)
+        }
+
+        return newSearchResponseList(
+            results,
+            hasNext = results.isNotEmpty()
+        )
+    }
+
+    private fun extractArticles(document: org.jsoup.nodes.Document): List<SearchResponse> {
+        val selectors = listOf(
+            "article",
+            ".post",
+            ".post-item",
+            ".article",
+            ".article-item",
+            ".item",
+            ".list-item",
+            ".excerpt",
+            ".card",
+            "a[href*='/archives/']"
+        )
+
+        val elements = selectors
+            .flatMap { selector -> document.select(selector) }
+            .distinctBy { element ->
+                element.selectFirst("a[href*='/archives/']")
+                    ?.absUrl("href")
+                    ?: element.absUrl("href")
+            }
+
+        return elements.mapNotNull { it.toSearchResult() }
+            .distinctBy { it.url }
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
-        val anchor = if (this.tagName() == "a") this else this.selectFirst("a[href*='/archives/']") ?: return null
-        val href = fixUrlNull(anchor.attr("href")) ?: return null
-        
-        val primaryTitle = selectFirst("h1, h2, h3, h4, h5, h6, .title, .entry-title")?.text()?.trim()
-        val anchorTitle = anchor.text()?.trim()
+        val anchor = when {
+            tagName() == "a" && attr("href").matches(articleUrlRegex) ->
+                this
 
-        val title = when {
-            !primaryTitle.isNullOrEmpty() -> primaryTitle
-            !anchorTitle.isNullOrEmpty() -> anchorTitle
-            else -> anchor.attr("title").ifEmpty { return null }
+            else ->
+                selectFirst("a[href*='/archives/']")
+        } ?: return null
+
+        val url = anchor.absUrl("href").ifBlank {
+            fixUrlNull(anchor.attr("href")) ?: return null
         }
 
-        val imgEl = selectFirst("img")
-        val inlineStyle = selectFirst("[style*='background']")?.attr("style") ?: this.attr("style")
-        
-        var poster = inlineStyle?.let { 
-            Regex("""url\((["']?)(.*?)\1\)""").find(it)?.groupValues?.get(2) 
-        } ?: imgEl?.attr("data-src")
-          ?: imgEl?.attr("data-original")
-          ?: imgEl?.attr("data-lazy")
-          ?: imgEl?.attr("src")
+        if (!articleUrlRegex.containsMatchIn(url)) return null
 
-        if (poster != null) {
-            if (poster.startsWith("//")) poster = "https:$poster"
-            if (!poster.startsWith("data:")) {
-                poster = fixUrl(poster)
-            } else {
-                poster = null
-            }
+        val title = listOf(
+            selectFirst("h1")?.text(),
+            selectFirst("h2")?.text(),
+            selectFirst("h3")?.text(),
+            selectFirst("h4")?.text(),
+            selectFirst(".title")?.text(),
+            selectFirst(".post-title")?.text(),
+            anchor.attr("title"),
+            anchor.text()
+        )
+            .map { it?.trim().orEmpty() }
+            .firstOrNull { it.isNotBlank() }
+            ?: return null
+
+        val image = selectFirst("img")
+        var poster = image?.attr("data-src")
+            ?.takeIf { it.isNotBlank() }
+            ?: image?.attr("data-original")
+                ?.takeIf { it.isNotBlank() }
+            ?: image?.attr("data-lazy-src")
+                ?.takeIf { it.isNotBlank() }
+            ?: image?.attr("src")
+                ?.takeIf { it.isNotBlank() }
+
+        if (!poster.isNullOrBlank()) {
+            poster = fixUrl(poster)
         }
 
-        return newMovieSearchResponse(title, href, TvType.NSFW) {
-            this.posterUrl = poster
+        return newMovieSearchResponse(
+            title = title,
+            url = url,
+            type = TvType.NSFW
+        ) {
+            posterUrl = poster
         }
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val document = app.get(url, referer = mainUrl).document
-        val title = document.selectFirst("h1.entry-title, h1, h2, title")?.text()?.trim() ?: "Mrds66 Video"
+        val document = app.get(
+            url,
+            referer = mainUrl
+        ).document
 
-        val poster = document.selectFirst("meta[property=og:image]")?.attr("content")
+        val title = listOf(
+            document.selectFirst("h1")?.text(),
+            document.selectFirst("h2")?.text(),
+            document.selectFirst("title")?.text()
+        )
+            .map { it?.trim().orEmpty() }
+            .firstOrNull { it.isNotBlank() }
+            ?: "MRDS66 视频"
+
+        val poster = document.selectFirst(
+            "meta[property='og:image']"
+        )?.attr("content")
+            ?.takeIf { it.isNotBlank() }
             ?.let { fixUrl(it) }
 
-        val description = document.selectFirst("meta[property=og:description]")?.attr("content")
-            ?: document.selectFirst(".entry-content")?.text()?.trim()
-        
-        val recommendations = document.select(targetSelectors).mapNotNull { 
-            it.toSearchResult() 
-        }.distinctBy { it.url }
+        val description = document.selectFirst(
+            "meta[property='og:description']"
+        )?.attr("content")
+            ?.trim()
 
-        return newMovieLoadResponse(title, url, TvType.NSFW, url) {
-            this.posterUrl = poster
-            this.plot = description
+        val recommendations = extractArticles(document)
+            .filter { it.url != url }
+            .distinctBy { it.url }
+
+        return newMovieLoadResponse(
+            name = title,
+            url = url,
+            type = TvType.NSFW,
+            dataUrl = url
+        ) {
+            posterUrl = poster
+            plot = description
             this.recommendations = recommendations
         }
     }
@@ -113,52 +224,98 @@ class Mrds66 : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val document = app.get(data, referer = mainUrl).document
-        var found = false
+        val response = app.get(
+            data,
+            referer = mainUrl
+        )
 
-        val rawHtml = document.toString()
-        val streamRegex = Regex("""["'](https?://[^"'\s>]+\.(?:m3u8|mp4)[^"'\s>]*)["']""")
-        streamRegex.findAll(rawHtml).map { it.groupValues[1] }.distinct().forEach { streamUrl ->
-            val cleanUrl = fixUrl(streamUrl)
-            val isM3u8 = cleanUrl.contains(".m3u8")
-            callback(
-                newExtractorLink(
-                    source = "Mrds66 Core",
-                    name = if (isM3u8) "HLS Stream" else "MP4 Video",
-                    url = cleanUrl,
-                    type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                )
-            )
-            found = true
-        }
+        val html = response.text
+        val document = response.document
 
-        document.select("video source, video").forEach { videoTag ->
-            val src = videoTag.attr("src").ifEmpty { videoTag.attr("data-src") }
-            if (src.isNotEmpty() && !src.startsWith("blob:")) {
-                val absoluteUrl = fixUrl(src)
-                val isM3u8 = absoluteUrl.contains(".m3u8")
-                callback(
-                    newExtractorLink(
-                        source = "HTML5 Player",
-                        name = "Direct Stream",
-                        url = absoluteUrl,
-                        type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                    )
-                )
-                found = true
+        val streamUrls = linkedSetOf<String>()
+
+        fun addCandidate(value: String?) {
+            if (value.isNullOrBlank()) return
+
+            var candidate = value
+                .replace("\\/", "/")
+                .replace("\\u0026", "&")
+                .replace("&amp;", "&")
+                .trim()
+
+            candidate = URLDecoder.decode(candidate, Charsets.UTF_8.name())
+
+            if (
+                candidate.startsWith("http") &&
+                candidate.contains(".m3u8", ignoreCase = true)
+            ) {
+                streamUrls += candidate
             }
         }
 
-        document.select("iframe").forEach { iframe ->
-            val src = iframe.attr("src").ifEmpty { iframe.attr("data-src") }
-            if (src.isNotEmpty() && !src.contains("addtoany")) {
-                val absoluteUrl = fixUrl(src)
-                if (loadExtractor(absoluteUrl, data, subtitleCallback, callback)) {
-                    found = true
+        /*
+         * Matches URLs such as:
+         * https://hls.qldjxf.cn/videos5/.../...m3u8?auth_key=...
+         */
+        val directM3u8Regex = Regex(
+            """https?://[^"'`\\\s<>]+\.m3u8(?:\?[^"'`\\\s<>]*)?""",
+            RegexOption.IGNORE_CASE
+        )
+
+        directM3u8Regex.findAll(html).forEach {
+            addCandidate(it.value)
+        }
+
+        /*
+         * Matches escaped or quoted player configuration values.
+         */
+        val configRegex = Regex(
+            """(?:file|url|src|source|video|playlist|m3u8)\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']""",
+            setOf(
+                RegexOption.IGNORE_CASE,
+                RegexOption.DOT_MATCHES_ALL
+            )
+        )
+
+        configRegex.findAll(html).forEach {
+            addCandidate(it.groupValues[1])
+        }
+
+        /*
+         * Check attributes in case the player configuration is stored in
+         * a data-* attribute.
+         */
+        document.select("*").forEach { element ->
+            element.attributes().forEach { attribute ->
+                if (
+                    attribute.value.contains(".m3u8", ignoreCase = true)
+                ) {
+                    directM3u8Regex.findAll(attribute.value).forEach {
+                        addCandidate(it.value)
+                    }
+                    addCandidate(attribute.value)
                 }
             }
         }
 
-        return found
+        if (streamUrls.isEmpty()) {
+            return false
+        }
+
+        streamUrls.forEachIndexed { index, streamUrl ->
+            callback(
+                newExtractorLink(
+                    source = name,
+                    name = if (index == 0) "MRDS66 HLS" else "MRDS66 HLS $index",
+                    url = streamUrl,
+                    referer = data,
+                    type = ExtractorLinkType.M3U8
+                ) {
+                    quality = Qualities.Unknown.value
+                }
+            )
+        }
+
+        return true
     }
 }
