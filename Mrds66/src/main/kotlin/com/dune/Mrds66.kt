@@ -27,10 +27,7 @@ class Mrds66 : MainAPI() {
         "$mainUrl/category/jdsj/" to "AV看片"
     )
 
-    private val articleUrlRegex = Regex(
-        """/archives/\d+/?""",
-        RegexOption.IGNORE_CASE
-    )
+    private val articleUrlRegex = Regex("/archives/\\d+/?", RegexOption.IGNORE_CASE)
 
     override suspend fun getMainPage(
         page: Int,
@@ -239,7 +236,7 @@ class Mrds66 : MainAPI() {
         }
 
         val directM3u8Regex = Regex(
-            """https?://[^"'`\\\s<>]+\.m3u8(?:\?[^"'`\\\s<>]*)?""",
+            "https?://[^\"'`\\\\s<>]+\\.m3u8(?:\\?[^\"'`\\\\s<>]*)?",
             RegexOption.IGNORE_CASE
         )
 
@@ -248,7 +245,7 @@ class Mrds66 : MainAPI() {
         }
 
         val configRegex = Regex(
-            """(?:file|url|src|source|video|playlist|m3u8)\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']""",
+            "(?:file|url|src|source|video|playlist|m3u8)\\s*[:=]\\s*[\"']([^\"']+\\.m3u8[^\"']*)[\"']",
             setOf(
                 RegexOption.IGNORE_CASE,
                 RegexOption.DOT_MATCHES_ALL
