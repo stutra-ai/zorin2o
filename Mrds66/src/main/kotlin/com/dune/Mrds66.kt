@@ -107,7 +107,14 @@ class Mrds66 : MainAPI() {
         return newSearchResponseList(results, hasNext = hasNext)
     }
 
-    override suspend fun quickSearch(query: String): List? = search(query, 1)
+    override suspend fun quickSearch(query: String): List? {
+        val url = "\(mainUrl/?s=\)query"
+        val document = app.get(url, headers = mainHeaders).document
+        val items = document.select("article, div.post, div.post-box, div.inside-article").filter { element ->
+            !element.hasClass("ad-item")
+        }
+        return items.mapNotNull { it.toSearchResponse() }
+    }
 
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url, headers = mainHeaders).document
@@ -159,7 +166,7 @@ class Mrds66 : MainAPI() {
             }
         }
 
-        val sourceRegex = Regex("https?://[^\"'\\s]+\\.(m3u8|mp4)[^\"'\\s]*")
+        val sourceRegex = Regex("""https?://[^\"'\\s]+\.(m3u8|mp4)[^\""\\s]*""")
         sourceRegex.findAll(document).forEach { match ->
             val mediaUrl = match.value
             val type = if (mediaUrl.contains("m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
