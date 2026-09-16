@@ -52,9 +52,8 @@ class Mrds66 : MainAPI() {
         }
 
         val document = app.get(url, headers = mainHeaders).document
-        // Filtering out ad-items based on console layout
-        val items = document.select("article, div.post, div.post-box, div.inside-article").filter {
-            !it.hasClass("ad-item") && it.selectFirst("a")?.attr("href")?.contains("/archives/") == true
+        val items = document.select("article, div.post, div.post-box, div.inside-article").filter { element ->
+            !element.hasClass("ad-item") && (element.selectFirst("a")?.attr("href")?.contains("/archives/") == true)
         }
 
         val home = items.mapNotNull { it.toSearchResponse() }
@@ -71,7 +70,7 @@ class Mrds66 : MainAPI() {
     }
 
     private fun Element.toSearchResponse(): SearchResponse? {
-        val linkElement = this.selectFirst("a[href*='/archives/']") ?: this.selectFirst("a")
+        val linkElement = this.selectFirst("a[href*=\"/archives/\"]") ?: this.selectFirst("a")
         val href = fixUrlNull(linkElement?.attr("href")) ?: return null
 
         val imgElement = this.selectFirst("img")
@@ -95,8 +94,8 @@ class Mrds66 : MainAPI() {
         val url = "\(mainUrl/page/\)page/?s=$query"
 
         val document = app.get(url, headers = mainHeaders).document
-        val items = document.select("article, div.post, div.post-box, div.inside-article").filter {
-            !it.hasClass("ad-item")
+        val items = document.select("article, div.post, div.post-box, div.inside-article").filter { element ->
+            !element.hasClass("ad-item")
         }
 
         val results = items.mapNotNull { it.toSearchResponse() }
@@ -148,7 +147,6 @@ class Mrds66 : MainAPI() {
         val document = app.get(data, headers = mainHeaders).text
         val doc = org.jsoup.Jsoup.parse(document)
 
-        // Find standard iframes
         val iframeSrcs = doc.select("iframe").mapNotNull { it.attr("src").ifBlank { null } }
         for (iframeUrl in iframeSrcs) {
             if (!iframeUrl.contains("addtoany.com")) {
@@ -156,7 +154,6 @@ class Mrds66 : MainAPI() {
             }
         }
 
-        // Find direct video source tags or sources embedded within page scripts
         val sourceRegex = Regex("[\"'](https?://[^\"']+\\.(m3u8|mp4)[^\"']*)[\"']")
         sourceRegex.findAll(document).forEach { match ->
             val mediaUrl = match.groupValues[1]
