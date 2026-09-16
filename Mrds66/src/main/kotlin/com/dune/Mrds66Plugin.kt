@@ -1,4 +1,4 @@
-package com.mrds66
+package com.dune
 
 import com.lagradost.cloudstream3.plugins.BasePlugin
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin

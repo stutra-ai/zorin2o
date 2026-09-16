@@ -1,4 +1,4 @@
-package com.mrds66
+package com.dune
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
@@ -49,9 +49,9 @@ class Mrds66 : MainAPI() {
             baseUrl.endsWith("/category/mhds") ||
             baseUrl.endsWith("/category/lqdp") ||
             baseUrl.endsWith("/category/jdsj") ->
-                "$baseUrl/page/$page/"
+                "\(baseUrl/page/\)page/"
             else ->
-                "$baseUrl/page/$page/"
+                "\(baseUrl/page/\)page/"
         }
 
         val document = app.get(
@@ -72,15 +72,10 @@ class Mrds66 : MainAPI() {
         query: String,
         page: Int
     ): SearchResponseList? {
-        /*
-         * The site does not appear to expose a conventional search endpoint
-         * in the supplied reports. Search locally through the archive page
-         * when possible.
-         */
         val archiveUrl = if (page <= 1) {
             "$mainUrl/archives.html"
         } else {
-            "$mainUrl/archives.html?page=$page"
+            "\(mainUrl/archives.html?page=\)page"
         }
 
         val document = app.get(
@@ -98,7 +93,7 @@ class Mrds66 : MainAPI() {
         )
     }
 
-    private fun extractArticles(document: org.jsoup.nodes.Document): List<SearchResponse> {
+    private fun extractArticles(document: org.jsoup.nodes.Document): List {
         val selectors = listOf(
             "article",
             ".post",
@@ -167,7 +162,7 @@ class Mrds66 : MainAPI() {
             poster = fixUrl(poster)
         }
 
-        return newMovieSearchResponse(
+        return this@Mrds66.newMovieSearchResponse(
             title = title,
             url = url,
             type = TvType.NSFW
@@ -232,7 +227,7 @@ class Mrds66 : MainAPI() {
         val html = response.text
         val document = response.document
 
-        val streamUrls = linkedSetOf<String>()
+        val streamUrls = linkedSetOf()
 
         fun addCandidate(value: String?) {
             if (value.isNullOrBlank()) return
@@ -240,7 +235,7 @@ class Mrds66 : MainAPI() {
             var candidate = value
                 .replace("\\/", "/")
                 .replace("\\u0026", "&")
-                .replace("&amp;", "&")
+                .replace("&", "&")
                 .trim()
 
             candidate = URLDecoder.decode(candidate, Charsets.UTF_8.name())
@@ -253,10 +248,6 @@ class Mrds66 : MainAPI() {
             }
         }
 
-        /*
-         * Matches URLs such as:
-         * https://hls.qldjxf.cn/videos5/.../...m3u8?auth_key=...
-         */
         val directM3u8Regex = Regex(
             """https?://[^"'`\\\s<>]+\.m3u8(?:\?[^"'`\\\s<>]*)?""",
             RegexOption.IGNORE_CASE
@@ -266,9 +257,6 @@ class Mrds66 : MainAPI() {
             addCandidate(it.value)
         }
 
-        /*
-         * Matches escaped or quoted player configuration values.
-         */
         val configRegex = Regex(
             """(?:file|url|src|source|video|playlist|m3u8)\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']""",
             setOf(
@@ -281,10 +269,6 @@ class Mrds66 : MainAPI() {
             addCandidate(it.groupValues[1])
         }
 
-        /*
-         * Check attributes in case the player configuration is stored in
-         * a data-* attribute.
-         */
         document.select("*").forEach { element ->
             element.attributes().forEach { attribute ->
                 if (
@@ -308,10 +292,10 @@ class Mrds66 : MainAPI() {
                     source = name,
                     name = if (index == 0) "MRDS66 HLS" else "MRDS66 HLS $index",
                     url = streamUrl,
-                    referer = data,
                     type = ExtractorLinkType.M3U8
                 ) {
                     quality = Qualities.Unknown.value
+                    this.referer = data
                 }
             )
         }
