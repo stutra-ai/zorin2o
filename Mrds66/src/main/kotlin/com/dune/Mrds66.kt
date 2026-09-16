@@ -28,7 +28,7 @@ class Mrds66 : MainAPI() {
         "$mainUrl/category/xazd/" to "校园学生",
         "$mainUrl/category/blyp/" to "必撸大赛",
         "$mainUrl/category/fctg/" to "反差泄密",
-        "$mainUrl/category/mhds/" to "网红黑料",
+        "$mainUrl/category/mhds/" -> "网红黑料",
         "$mainUrl/category/lqdp/" to "猎奇重口",
         "$mainUrl/category/jdsj/" to "AV看片",
         "$mainUrl/category/mxwh/" to "明星大赛",
@@ -45,15 +45,17 @@ class Mrds66 : MainAPI() {
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        val targetUrl = request.data
         val url = if (page == 1) {
-            request.data
+            targetUrl
         } else {
-            "\({request.data.removeSuffix("/")}/page/\)page/"
+            val cleanBase = targetUrl.removeSuffix("/")
+            "\(cleanBase/page/\)page/"
         }
 
         val document = app.get(url, headers = mainHeaders).document
         val items = document.select("article, div.post, div.post-box, div.inside-article").filter { element ->
-            !element.hasClass("ad-item") && (element.selectFirst("a")?.attr("href")?.contains("/archives/") == true)
+            !element.hasClass("ad-item") && (element.selectFirst("a")?.attr("href")?.contains("archives") == true)
         }
 
         val home = items.mapNotNull { it.toSearchResponse() }
@@ -70,13 +72,14 @@ class Mrds66 : MainAPI() {
     }
 
     private fun Element.toSearchResponse(): SearchResponse? {
-        val linkElement = this.selectFirst("a[href*=\"/archives/\"]") ?: this.selectFirst("a")
-        val href = fixUrlNull(linkElement?.attr("href")) ?: return null
+        val linkElement = this.selectFirst("a") ?: return null
+        val href = fixUrlNull(linkElement.attr("href")) ?: return null
+        if (!href.contains("archives")) return null
 
         val imgElement = this.selectFirst("img")
         val title = imgElement?.attr("alt")?.trim()?.ifBlank { null }
-            ?: linkElement?.attr("title")?.trim()?.ifBlank { null }
-            ?: linkElement?.text()?.trim()?.ifBlank { null }
+            ?: linkElement.attr("title").trim().ifBlank { null }
+            ?: linkElement.text().trim().ifBlank { null }
             ?: this.selectFirst("h2, h3, h1")?.text()?.trim()
             ?: return null
 
@@ -130,6 +133,8 @@ class Mrds66 : MainAPI() {
         if (title.isNullOrBlank() || title.contains("loadBannerDirect")) return null
 
         val href = fixUrlNull(this.selectFirst("a")?.attr("href")) ?: return null
+        if (href.contains("archives") != true) return null
+        
         val posterUrl = fixUrlNull(this.selectFirst("a img")?.attr("src"))
 
         return newMovieSearchResponse(title, href, TvType.NSFW) {
@@ -154,10 +159,10 @@ class Mrds66 : MainAPI() {
             }
         }
 
-        val sourceRegex = Regex("[\"'](https?://[^\"']+\\.(m3u8|mp4)[^\"']*)[\"']")
+        val sourceRegex = Regex("https?://[^\"'\\s]+\\.(m3u8|mp4)[^\"'\\s]*")
         sourceRegex.findAll(document).forEach { match ->
-            val mediaUrl = match.groupValues[1]
-            val type = if (mediaUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
+            val mediaUrl = match.value
+            val type = if (mediaUrl.contains("m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
             callback.invoke(
                 newExtractorLink(
                     source = name,
