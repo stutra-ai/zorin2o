@@ -41,7 +41,7 @@ class Mrds66 : MainAPI() {
         val url = if (page <= 1) {
             request.data
         } else {
-            "(baseUrl/page/)page/"
+            "\(baseUrl/page/\)page/"
         }
 
         val document = app.get(
@@ -65,7 +65,7 @@ class Mrds66 : MainAPI() {
         val archiveUrl = if (page <= 1) {
             "$mainUrl/archives.html"
         } else {
-            "(mainUrl/archives.html?page=)page"
+            "\(mainUrl/archives.html?page=\)page"
         }
 
         val document = app.get(
@@ -283,9 +283,10 @@ class Mrds66 : MainAPI() {
                     name = if (index == 0) "MRDS66 HLS" else "MRDS66 HLS $index",
                     url = streamUrl,
                     type = ExtractorLinkType.M3U8
+                ) {
                     quality = Qualities.Unknown.value
                     this.referer = data
-                )
+                }
             )
         }
 
