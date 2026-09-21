@@ -1,10 +1,17 @@
 package com.dune
 
+import android.os.Handler
+import android.os.Looper
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import com.lagradost.api.Log
 import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
+import org.json.JSONArray
 
 class ZorinMissAV : MainAPI() {
     override var mainUrl = "https://missav.live"
@@ -118,17 +125,88 @@ class ZorinMissAV : MainAPI() {
         val poster = fixUrlNull(document.selectFirst("meta[property='og:image']")?.attr("content"))
         val year = document.selectFirst("time")?.text()?.split("-")?.firstOrNull()?.toIntOrNull()
 
-        val tags = document.select("div.text-secondary:contains(genre) a").map {
-            it.text().trim() }
-        val actresses = document.select("div.text-secondary:contains(actress) a").map {
-            Actor(it.text().trim()) }
+        val tags = document.select("div.text-secondary:contains(genre) a").map { it.text().trim() }
+        val actresses = document.select("div.text-secondary:contains(actress) a").map { Actor(it.text().trim()) }
+
+        // Fetch exact Recombee sidebar recommendations via a headless background WebView
+        val recommendations = fetchWebViewRecommendations(url)
 
         return newMovieLoadResponse(title, url, TvType.NSFW, url) {
             this.posterUrl = poster
             this.year = year
             this.tags = tags
             addActors(actresses)
-            this.recommendations = emptyList()
+            this.recommendations = recommendations
+        }
+    }
+
+    private suspend fun fetchWebViewRecommendations(targetUrl: String): List<SearchResponse> = suspendCancellableCoroutine { continuation ->
+        Handler(Looper.getMainLooper()).post {
+            val context = com.lagradost.cloudstream3.Common.context ?: run {
+                continuation.resume(emptyList())
+                return@post
+            }
+            
+            val webView = WebView(context)
+            webView.settings.javaScriptEnabled = true
+            webView.settings.domStorageEnabled = true
+            webView.settings.blockNetworkImage = true // Speeds up loading by skipping images
+
+            webView.webViewClient = object : WebViewClient() {
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    // Give Recombee 3 seconds to inject the recommendation cards into the DOM
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        webView.evaluateJavascript(
+                            """
+                            (function() {
+                                const cards = document.querySelectorAll('div.hidden.lg\\:flex div.thumbnail.group');
+                                const results = [];
+                                cards.forEach(c => {
+                                    const a = c.querySelector('a');
+                                    const img = c.querySelector('img');
+                                    if (a && img) {
+                                        results.push({
+                                            url: a.href,
+                                            poster: img.dataset.src || img.src || '',
+                                            title: img.alt || ''
+                                        });
+                                    }
+                                });
+                                return JSON.stringify(results);
+                            })();
+                            """.trimIndent()
+                        ) { jsonString ->
+                            webView.destroy()
+                            val list = mutableListOf<SearchResponse>()
+                            try {
+                                val cleanedJson = jsonString?.let { 
+                                    if (it.startsWith("\"") && it.endsWith("\"")) org.json.JSONTokener(it).nextValue() as? String else it 
+                                } ?: "[]"
+                                
+                                val jsonArray = JSONArray(cleanedJson)
+                                for (i in 0 until jsonArray.length()) {
+                                    val obj = jsonArray.getJSONObject(i)
+                                    val recUrl = obj.optString("url")
+                                    val recPoster = obj.optString("poster")
+                                    val recTitle = obj.optString("title").ifEmpty { recUrl.substringAfterLast("/") }
+
+                                    if (recUrl.isNotEmpty()) {
+                                        list.add(
+                                            newMovieSearchResponse(recTitle, recUrl, TvType.NSFW) {
+                                                this.posterUrl = recPoster
+                                            }
+                                        )
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Log.d("ZorinMissAV", "Error parsing WebView recommendations: ${e.message}")
+                            }
+                            continuation.resume(list)
+                        }
+                    }, 3000)
+                }
+            }
+            webView.loadUrl(targetUrl)
         }
     }
 
