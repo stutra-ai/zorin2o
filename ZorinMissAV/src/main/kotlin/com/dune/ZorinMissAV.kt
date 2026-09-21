@@ -15,6 +15,10 @@ class ZorinMissAV : MainAPI() {
     override val supportedTypes = setOf(TvType.NSFW)
     val subtitleCatUrl = "https://www.subtitlecat.com"
 
+    private val mainHeaders = mapOf(
+        "Referer" to "$mainUrl/"
+    )
+
     override val mainPage = mainPageOf(
         "$mainUrl/dm169/en/weekly-hot?sort=weekly_views" to "Weekly Hot",
         "$mainUrl/dm263/en/monthly-hot?sort=views" to "Monthly Hot",
@@ -92,26 +96,6 @@ class ZorinMissAV : MainAPI() {
         }
     }
 
-    private fun Element.toRecommendationResult(): SearchResponse? {
-        val link = selectFirst("a[href*='/en/'], a[href*='/dm']") ?: return null
-        val url = fixUrlNull(link.attr("abs:href")) ?: return null
-
-        val title = selectFirst("div.my-2 a, div.title a, a.text-secondary")?.text()?.trim()
-            ?: link.text().trim()
-
-        if (title.isBlank()) return null
-
-        val posterUrl = fixUrlNull(
-            selectFirst("img")?.let {
-                it.attr("abs:data-src").ifEmpty { it.attr("abs:src") }
-            }
-        ) ?: return null
-
-        return newMovieSearchResponse(title, url, TvType.NSFW) {
-            this.posterUrl = posterUrl
-        }
-    }
-
     override suspend fun search(query: String, page: Int): SearchResponseList {
         val url = if (page == 1) {
             "${mainUrl}/en/search/${query}"
@@ -143,7 +127,8 @@ class ZorinMissAV : MainAPI() {
             Actor(it.text().trim()) 
         }
 
-        val recommendations = document.select("div.grid.grid-cols-2 > div, div.thumbnail.group")
+        // Recommendation reference pattern adapted from JavGuru.kt
+        val recommendations = document.select("div.grid.grid-cols-2 > div, div.thumbnail.group, li")
             .mapNotNull { it.toRecommendationResult() }
             .distinctBy { it.url }
 
@@ -153,6 +138,27 @@ class ZorinMissAV : MainAPI() {
             this.tags = tags
             addActors(actresses)
             this.recommendations = recommendations
+        }
+    }
+
+    private fun Element.toRecommendationResult(): SearchResponse? {
+        val link = selectFirst("a[href*='/en/'], a[href*='/dm']") ?: return null
+        val title = selectFirst("div.my-2 a, div.title a, a.text-secondary")?.text()?.trim()
+            ?: link.text().trim()
+            ?: selectFirst("a img")?.attr("alt")?.trim()
+            ?: return null
+
+        if (title.isBlank() || title.equals("Home", ignoreCase = true)) return null
+
+        val href = fixUrlNull(link.attr("abs:href")) ?: fixUrlNull(selectFirst("a")?.attr("href")) ?: return null
+        val posterUrl = fixUrlNull(
+            selectFirst("img")?.let {
+                it.attr("abs:data-src").ifEmpty { it.attr("abs:src") }
+            }
+        ) ?: return null
+
+        return newMovieSearchResponse(title, href, TvType.NSFW) {
+            this.posterUrl = posterUrl
         }
     }
 
