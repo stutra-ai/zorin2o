@@ -5,7 +5,6 @@ import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
-import com.lagradost.cloudstream3.LoadResponse.Companion.addRecommendations
 
 class ZorinMissAV : MainAPI() {
     override var mainUrl = "https://missav.live"
@@ -93,7 +92,6 @@ class ZorinMissAV : MainAPI() {
         }
     }
 
-    // Helper parser specifically tailored for recommendation grids inside detail pages
     private fun Element.toRecommendationResult(): SearchResponse? {
         val link = selectFirst("a[href*='/en/'], a[href*='/dm']") ?: return null
         val url = fixUrlNull(link.attr("abs:href")) ?: return null
@@ -145,7 +143,6 @@ class ZorinMissAV : MainAPI() {
             Actor(it.text().trim()) 
         }
 
-        // Extract recommendations from the recommendation section of the page
         val recommendations = document.select("div.grid.grid-cols-2 > div, div.thumbnail.group")
             .mapNotNull { it.toRecommendationResult() }
             .distinctBy { it.url }
@@ -155,7 +152,7 @@ class ZorinMissAV : MainAPI() {
             this.year = year
             this.tags = tags
             addActors(actresses)
-            addRecommendations(recommendations)
+            this.recommendations = recommendations
         }
     }
 
