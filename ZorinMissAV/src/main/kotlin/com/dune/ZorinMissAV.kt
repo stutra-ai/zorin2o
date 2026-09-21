@@ -62,10 +62,11 @@ class ZorinMissAV : MainAPI() {
     }
 
     private fun Element.toMainPageResult(): SearchResponse? {
-        val link = selectFirst("a[href*='/en/'], a[href*='/dm']") ?: return null
+        val link = if (tagName() == "a") this else selectFirst("a[href*='/en/'], a[href*='/dm']") ?: return null
         val url = fixUrlNull(link.attr("abs:href")) ?: return null
 
-        val baseTitle = selectFirst("div.my-2 a, div.title a, a.text-secondary")?.text()?.trim()
+        val baseTitle = selectFirst("div.my-2 a, div.title a, a.text-secondary, div.truncate, .truncate, div.mt-1")?.text()?.trim()
+            ?: link.attr("title").ifBlank { null }
             ?: link.text().trim()
 
         if (baseTitle.isBlank()) return null
@@ -81,6 +82,8 @@ class ZorinMissAV : MainAPI() {
 
         val posterUrl = fixUrlNull(
             selectFirst("img")?.let {
+                it.attr("abs:data-src").ifEmpty { it.attr("abs:src") }
+            } ?: link.selectFirst("img")?.let {
                 it.attr("abs:data-src").ifEmpty { it.attr("abs:src") }
             }
         )
@@ -121,8 +124,8 @@ class ZorinMissAV : MainAPI() {
         val actresses = document.select("div.text-secondary:contains(actress) a").map {
             Actor(it.text().trim()) }
 
-        // Extracting recommendations using your precise sidebar/grid elements
-        val recommendations = document.select("div.hidden.lg\\:flex div.relative.overflow-hidden, div.thumbnail.group")
+        // Extracting recommendations from sidebar container and grid items
+        val recommendations = document.select("div.hidden.lg\\:flex a.group, div.hidden.lg\\:flex div.mb-4, div.thumbnail.group")
             .mapNotNull { it.toMainPageResult() }
             .distinctBy { it.url }
 
