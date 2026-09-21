@@ -1,17 +1,10 @@
 package com.dune
 
-import android.os.Handler
-import android.os.Looper
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import android.util.Log
 import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlin.coroutines.resume
-import org.json.JSONArray
 
 class ZorinMissAV : MainAPI() {
     override var mainUrl = "https://missav.live"
@@ -128,8 +121,34 @@ class ZorinMissAV : MainAPI() {
         val tags = document.select("div.text-secondary:contains(genre) a").map { it.text().trim() }
         val actresses = document.select("div.text-secondary:contains(actress) a").map { Actor(it.text().trim()) }
 
-        // Fetch exact Recombee sidebar recommendations via a headless background WebView
-        val recommendations = fetchWebViewRecommendations(url)
+        // Populate recommendations cleanly using matching actress or tag pages
+        val recommendations = mutableListOf<SearchResponse>()
+        try {
+            val firstActress = actresses.firstOrNull()?.name
+            val targetUrl = if (!firstActress.isNullOrEmpty()) {
+                val formatted = firstActress.lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-')
+                "$mainUrl/en/actress/$formatted"
+            } else {
+                val firstTag = tags.firstOrNull()
+                if (!firstTag.isNullOrEmpty()) {
+                    val formatted = firstTag.lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-')
+                    "$mainUrl/en/tags/$formatted"
+                } else null
+            }
+
+            if (targetUrl != null) {
+                val relDoc = app.get(targetUrl, timeout = 10).document
+                recommendations.addAll(
+                    relDoc.select("div.grid.grid-cols-2 > div, div.thumbnail.group")
+                        .mapNotNull { it.toMainPageResult() }
+                        .filter { it.url != url }
+                        .distinctBy { it.url }
+                        .take(12)
+                )
+            }
+        } catch (e: Exception) {
+            Log.d("ZorinMissAV", "Error fetching recommendations: ${e.message}")
+        }
 
         return newMovieLoadResponse(title, url, TvType.NSFW, url) {
             this.posterUrl = poster
@@ -137,75 +156,6 @@ class ZorinMissAV : MainAPI() {
             this.tags = tags
             addActors(actresses)
             this.recommendations = recommendations
-        }
-    }
-
-    private suspend fun fetchWebViewRecommendations(targetUrl: String): List<SearchResponse> = suspendCancellableCoroutine { continuation ->
-        Handler(Looper.getMainLooper()).post {
-            val context = com.lagradost.cloudstream3.Common.context ?: run {
-                continuation.resume(emptyList())
-                return@post
-            }
-            
-            val webView = WebView(context)
-            webView.settings.javaScriptEnabled = true
-            webView.settings.domStorageEnabled = true
-            webView.settings.blockNetworkImage = true
-
-            webView.webViewClient = object : WebViewClient() {
-                override fun onPageFinished(view: WebView?, url: String?) {
-                    Handler(Looper.getMainLooper()).postDelayed({
-                        webView.evaluateJavascript(
-                            """
-                            (function() {
-                                const cards = document.querySelectorAll('div.hidden.lg\\:flex div.thumbnail.group');
-                                const results = [];
-                                cards.forEach(c => {
-                                    const a = c.querySelector('a');
-                                    const img = c.querySelector('img');
-                                    if (a && img) {
-                                        results.push({
-                                            url: a.href,
-                                            poster: img.dataset.src || img.src || '',
-                                            title: img.alt || ''
-                                        });
-                                    }
-                                });
-                                return JSON.stringify(results);
-                            })();
-                            """.trimIndent()
-                        ) { jsonString ->
-                            webView.destroy()
-                            val list = mutableListOf<SearchResponse>()
-                            try {
-                                val cleanedJson = jsonString?.let { 
-                                    if (it.startsWith("\"") && it.endsWith("\"")) org.json.JSONTokener(it).nextValue() as? String else it 
-                                } ?: "[]"
-                                
-                                val jsonArray = JSONArray(cleanedJson)
-                                for (i in 0 until jsonArray.length()) {
-                                    val obj = jsonArray.getJSONObject(i)
-                                    val recUrl = obj.optString("url")
-                                    val recPoster = obj.optString("poster")
-                                    val recTitle = obj.optString("title").ifEmpty { recUrl.substringAfterLast("/") }
-
-                                    if (recUrl.isNotEmpty()) {
-                                        list.add(
-                                            newMovieSearchResponse(recTitle, recUrl, TvType.NSFW) {
-                                                this.posterUrl = recPoster
-                                            }
-                                        )
-                                    }
-                                }
-                            } catch (e: Exception) {
-                                Log.d("ZorinMissAV", "Error parsing WebView recommendations: ${e.message}")
-                            }
-                            continuation.resume(list)
-                        }
-                    }, 3000)
-                }
-            }
-            webView.loadUrl(targetUrl)
         }
     }
 
