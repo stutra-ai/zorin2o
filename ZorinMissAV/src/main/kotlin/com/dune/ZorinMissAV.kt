@@ -123,11 +123,35 @@ class ZorinMissAV : MainAPI() {
         val actresses = document.select("div.text-secondary:contains(actress) a").map {
             Actor(it.text().trim()) }
 
-        // Extracting recommendations targeting unique thumbnail blocks in the sidebar
+        // Extracting recommendations by processing each sidebar card's image/link element directly
         val recommendations = document.select("div.hidden.lg\\:flex div.thumbnail.group")
             .mapNotNull { card ->
-                val mainLink = card.selectFirst("a:has(img)") ?: card.selectFirst("a[href*='/en/'], a[href*='/dm']")
-                mainLink?.toMainPageResult()
+                val link = card.selectFirst("a[href*='/en/'], a[href*='/dm']")
+                val img = card.selectFirst("img")
+                if (link != null && img != null) {
+                    // Build SearchResponse directly using the card's extracted link and image
+                    val rawUrl = link.attr("abs:href").ifEmpty { link.attr("href") }
+                    if (rawUrl.isBlank()) return@mapNotNull null
+                    val cleanUrl = fixUrlNull(rawUrl.substringBefore("#")) ?: return@mapNotNull null
+                    
+                    val posterUrl = fixUrlNull(
+                        img.attr("abs:data-src").ifEmpty { img.attr("data-src") }
+                            .ifEmpty { img.attr("abs:src") }.ifEmpty { img.attr("src") }
+                    ) ?: return@mapNotNull null
+
+                    val altText = img.attr("alt").takeIf { it.isNotBlank() } ?: link.attr("alt").takeIf { it.isNotBlank() }
+                    val baseTitle = altText ?: cleanUrl.substringAfterLast("/").substringBefore("#")
+
+                    val isUncensored = (link.attr("alt") + link.attr("href") + card.outerHtml())
+                        .contains(Regex("uncensored[-_ ]?leak", RegexOption.IGNORE_CASE))
+
+                    val itemTitle = if (isUncensored && !baseTitle.startsWith("Uncensored - ", ignoreCase = true))
+                        "Uncensored - $baseTitle" else baseTitle
+
+                    newMovieSearchResponse(itemTitle, cleanUrl, TvType.NSFW) {
+                        this.posterUrl = posterUrl
+                    }
+                } else null
             }
             .distinctBy { it.url }
 
