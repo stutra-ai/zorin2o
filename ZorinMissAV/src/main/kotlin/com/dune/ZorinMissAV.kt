@@ -63,8 +63,7 @@ class ZorinMissAV : MainAPI() {
 
     private fun Element.toMainPageResult(): SearchResponse? {
         val link = selectFirst("a[href*='/en/'], a[href*='/dm']") ?: return null
-        val rawHref = link.attr("abs:href").ifEmpty { selectFirst("a")?.attr("abs:href") } ?: return null
-        val url = fixUrlNull(rawHref.substringBefore("#")) ?: return null
+        val url = fixUrlNull(link.attr("abs:href")) ?: return null
 
         val baseTitle = selectFirst("div.my-2 a, div.title a, a.text-secondary")?.text()?.trim()
             ?: link.text().trim()
@@ -118,14 +117,13 @@ class ZorinMissAV : MainAPI() {
         val year = document.selectFirst("time")?.text()?.split("-")?.firstOrNull()?.toIntOrNull()
 
         val tags = document.select("div.text-secondary:contains(genre) a").map {
-            it.text().trim() 
-        }
+            it.text().trim() }
         val actresses = document.select("div.text-secondary:contains(actress) a").map {
-            Actor(it.text().trim()) 
-        }
+            Actor(it.text().trim()) }
 
-        val recommendations = document.select("div.grid.grid-cols-2 > div, div.thumbnail.group, div.space-y-4 div.grid > div")
-            .mapNotNull { it.toRecommendationResult() }
+        // Extracting recommendations using your precise sidebar/grid elements
+        val recommendations = document.select("div.hidden.lg\\:flex div.relative.overflow-hidden, div.thumbnail.group")
+            .mapNotNull { it.toMainPageResult() }
             .distinctBy { it.url }
 
         return newMovieLoadResponse(title, url, TvType.NSFW, url) {
@@ -134,29 +132,6 @@ class ZorinMissAV : MainAPI() {
             this.tags = tags
             addActors(actresses)
             this.recommendations = recommendations
-        }
-    }
-
-    private fun Element.toRecommendationResult(): SearchResponse? {
-        val link = selectFirst("a[href*='/en/'], a[href*='/dm']") ?: return null
-        val rawHref = link.attr("abs:href").ifEmpty { selectFirst("a")?.attr("abs:href") } ?: return null
-        val href = fixUrlNull(rawHref.substringBefore("#")) ?: return null
-
-        val baseTitle = selectFirst("div.my-2 a, div.title a, a.text-secondary")?.text()?.trim()
-            ?: link.text().trim()
-            ?: selectFirst("a img")?.attr("alt")?.trim()
-            ?: return null
-
-        if (baseTitle.isBlank() || baseTitle.equals("Home", ignoreCase = true)) return null
-
-        val posterUrl = fixUrlNull(
-            selectFirst("img")?.let {
-                it.attr("abs:data-src").ifEmpty { it.attr("abs:src") }
-            }
-        ) ?: return null
-
-        return newMovieSearchResponse(baseTitle, href, TvType.NSFW) {
-            this.posterUrl = posterUrl
         }
     }
 
@@ -212,7 +187,7 @@ class ZorinMissAV : MainAPI() {
                                     subtitleCallback.invoke(
                                         SubtitleFile(
                                             language.replace("\uD83D\uDC4D \uD83D\uDC4E",""),  
-                                            url     
+                                            url   
                                         )
                                     )
                                 }
