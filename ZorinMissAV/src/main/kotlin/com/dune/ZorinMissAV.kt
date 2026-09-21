@@ -4,7 +4,7 @@ import android.os.Handler
 import android.os.Looper
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import com.lagradost.api.Log
+import android.util.Log
 import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
@@ -150,11 +150,10 @@ class ZorinMissAV : MainAPI() {
             val webView = WebView(context)
             webView.settings.javaScriptEnabled = true
             webView.settings.domStorageEnabled = true
-            webView.settings.blockNetworkImage = true // Speeds up loading by skipping images
+            webView.settings.blockNetworkImage = true
 
             webView.webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
-                    // Give Recombee 3 seconds to inject the recommendation cards into the DOM
                     Handler(Looper.getMainLooper()).postDelayed({
                         webView.evaluateJavascript(
                             """
