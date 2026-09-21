@@ -8,8 +8,7 @@ version = 1.1
 cloudstream {
     authors     = listOf("Dune")
     language    = "en"
-    description = "Mrds66"
+    description = "MissAV(Zorin)"
     status      = 1
     tvTypes     = listOf("NSFW")
-    iconUrl     = "https://pinaycum.tv/favicon.ico"
 }
