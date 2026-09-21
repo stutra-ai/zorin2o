@@ -63,13 +63,19 @@ class ZorinMissAV : MainAPI() {
 
     private fun Element.toMainPageResult(): SearchResponse? {
         val link = if (tagName() == "a") this else selectFirst("a[href*='/en/'], a[href*='/dm']") ?: return null
-        val url = fixUrlNull(link.attr("abs:href")) ?: return null
+        val rawUrl = link.attr("abs:href").ifEmpty { attr("abs:href") }
+        if (rawUrl.isBlank()) return null
+        val url = fixUrlNull(rawUrl.substringBefore("#")) ?: return null
 
+        val imgElement = selectFirst("img") ?: link.selectFirst("img")
+        val altText = imgElement?.attr("alt")?.takeIf { it.isNotBlank() } ?: link.attr("alt").takeIf { it.isNotBlank() }
+
+        // Extract title from elements or fallback to alt attribute / URL slug segment
         val baseTitle = selectFirst("div.my-2 a, div.title a, a.text-secondary, div.truncate, .truncate, div.mt-1")?.text()?.trim()
-            ?: link.attr("title").ifBlank { null }
-            ?: link.text().trim()
-
-        if (baseTitle.isBlank()) return null
+            .takeIf { !it.isNullOrBlank() && !it.contains("Chinese subtitle") }
+            ?: altText
+            ?: link.attr("title").takeIf { it.isNotBlank() }
+            ?: url.substringAfterLast("/").substringBefore("#")
 
         val blacklist = listOf("Recent update", "Contact", "Support", "DMCA", "Home")
         if (blacklist.any { baseTitle.equals(it, ignoreCase = true) }) return null
@@ -81,9 +87,7 @@ class ZorinMissAV : MainAPI() {
             "Uncensored - $baseTitle" else baseTitle
 
         val posterUrl = fixUrlNull(
-            selectFirst("img")?.let {
-                it.attr("abs:data-src").ifEmpty { it.attr("abs:src") }
-            } ?: link.selectFirst("img")?.let {
+            imgElement?.let {
                 it.attr("abs:data-src").ifEmpty { it.attr("abs:src") }
             }
         )
@@ -124,8 +128,8 @@ class ZorinMissAV : MainAPI() {
         val actresses = document.select("div.text-secondary:contains(actress) a").map {
             Actor(it.text().trim()) }
 
-        // Extracting recommendations from sidebar container and grid items
-        val recommendations = document.select("div.hidden.lg\\:flex a.group, div.hidden.lg\\:flex div.mb-4, div.thumbnail.group")
+        // Extracting recommendations from the sidebar container and grid items
+        val recommendations = document.select("div.hidden.lg\\:flex div.thumbnail.group, div.thumbnail.group")
             .mapNotNull { it.toMainPageResult() }
             .distinctBy { it.url }
 
