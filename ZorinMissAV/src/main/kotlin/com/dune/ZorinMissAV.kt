@@ -5,6 +5,7 @@ import org.jsoup.nodes.Element
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.LoadResponse.Companion.addActors
+import com.lagradost.cloudstream3.LoadResponse.Companion.addRecommendations
 
 class ZorinMissAV : MainAPI() {
     override var mainUrl = "https://missav.live"
@@ -92,6 +93,27 @@ class ZorinMissAV : MainAPI() {
         }
     }
 
+    // Helper parser specifically tailored for recommendation grids inside detail pages
+    private fun Element.toRecommendationResult(): SearchResponse? {
+        val link = selectFirst("a[href*='/en/'], a[href*='/dm']") ?: return null
+        val url = fixUrlNull(link.attr("abs:href")) ?: return null
+
+        val title = selectFirst("div.my-2 a, div.title a, a.text-secondary")?.text()?.trim()
+            ?: link.text().trim()
+
+        if (title.isBlank()) return null
+
+        val posterUrl = fixUrlNull(
+            selectFirst("img")?.let {
+                it.attr("abs:data-src").ifEmpty { it.attr("abs:src") }
+            }
+        ) ?: return null
+
+        return newMovieSearchResponse(title, url, TvType.NSFW) {
+            this.posterUrl = posterUrl
+        }
+    }
+
     override suspend fun search(query: String, page: Int): SearchResponseList {
         val url = if (page == 1) {
             "${mainUrl}/en/search/${query}"
@@ -103,7 +125,6 @@ class ZorinMissAV : MainAPI() {
 
         val aramaCevap =
             document.select("div.grid.grid-cols-2 > div").mapNotNull { it.toMainPageResult() }
-
 
         return newSearchResponseList(aramaCevap, hasNext = true)
     }
@@ -118,14 +139,23 @@ class ZorinMissAV : MainAPI() {
         val year = document.selectFirst("time")?.text()?.split("-")?.firstOrNull()?.toIntOrNull()
 
         val tags = document.select("div.text-secondary:contains(genre) a").map {
-            it.text().trim() }
+            it.text().trim() 
+        }
         val actresses = document.select("div.text-secondary:contains(actress) a").map {
-            Actor(it.text().trim()) }
+            Actor(it.text().trim()) 
+        }
+
+        // Extract recommendations from the recommendation section of the page
+        val recommendations = document.select("div.grid.grid-cols-2 > div, div.thumbnail.group")
+            .mapNotNull { it.toRecommendationResult() }
+            .distinctBy { it.url }
+
         return newMovieLoadResponse(title, url, TvType.NSFW, url) {
             this.posterUrl = poster
             this.year = year
             this.tags = tags
             addActors(actresses)
+            addRecommendations(recommendations)
         }
     }
 
@@ -180,17 +210,15 @@ class ZorinMissAV : MainAPI() {
                                     val url = "$subtitleCatUrl${text[0].attr("href")}"
                                     subtitleCallback.invoke(
                                         SubtitleFile(
-                                            language.replace("\uD83D\uDC4D \uD83D\uDC4E",""),  // Use label for the name
-                                            url     // Use extracted URL
+                                            language.replace("\uD83D\uDC4D \uD83D\uDC4E",""),  
+                                            url     
                                         )
                                     )
                                 }
                             } catch (e: Exception) { }
                         }
-
                     }
                 }
-
             }
         } catch (e: Exception) { }
         return true
