@@ -63,14 +63,17 @@ class ZorinMissAV : MainAPI() {
 
     private fun Element.toMainPageResult(): SearchResponse? {
         val link = if (tagName() == "a") this else selectFirst("a[href*='/en/'], a[href*='/dm']") ?: return null
-        val rawUrl = link.attr("abs:href").ifEmpty { attr("abs:href") }
+        val rawUrl = link.attr("abs:href").ifEmpty { link.attr("href") }
         if (rawUrl.isBlank()) return null
         val url = fixUrlNull(rawUrl.substringBefore("#")) ?: return null
 
-        val imgElement = selectFirst("img") ?: link.selectFirst("img")
-        val altText = imgElement?.attr("alt")?.takeIf { it.isNotBlank() } ?: link.attr("alt").takeIf { it.isNotBlank() }
+        val imgElement = selectFirst("img") ?: link.selectFirst("img") ?: return null
+        val posterUrl = fixUrlNull(
+            imgElement.attr("abs:data-src").ifEmpty { imgElement.attr("data-src") }
+                .ifEmpty { imgElement.attr("abs:src") }.ifEmpty { imgElement.attr("src") }
+        ) ?: return null
 
-        // Extract title from elements or fallback to alt attribute / URL slug segment
+        val altText = imgElement.attr("alt").takeIf { it.isNotBlank() } ?: link.attr("alt").takeIf { it.isNotBlank() }
         val baseTitle = selectFirst("div.my-2 a, div.title a, a.text-secondary, div.truncate, .truncate, div.mt-1")?.text()?.trim()
             .takeIf { !it.isNullOrBlank() && !it.contains("Chinese subtitle") }
             ?: altText
@@ -85,14 +88,6 @@ class ZorinMissAV : MainAPI() {
 
         val title = if (isUncensored && !baseTitle.startsWith("Uncensored - ", ignoreCase = true))
             "Uncensored - $baseTitle" else baseTitle
-
-        val posterUrl = fixUrlNull(
-            imgElement?.let {
-                it.attr("abs:data-src").ifEmpty { it.attr("abs:src") }
-            }
-        )
-
-        if (posterUrl == null) return null
 
         return newMovieSearchResponse(title, url, TvType.NSFW) {
             this.posterUrl = posterUrl
@@ -128,9 +123,12 @@ class ZorinMissAV : MainAPI() {
         val actresses = document.select("div.text-secondary:contains(actress) a").map {
             Actor(it.text().trim()) }
 
-        // Extracting recommendations from the sidebar container and grid items
-        val recommendations = document.select("div.hidden.lg\\:flex div.thumbnail.group, div.thumbnail.group")
-            .mapNotNull { it.toMainPageResult() }
+        // Extracting recommendations targeting unique thumbnail blocks in the sidebar
+        val recommendations = document.select("div.hidden.lg\\:flex div.thumbnail.group")
+            .mapNotNull { card ->
+                val mainLink = card.selectFirst("a:has(img)") ?: card.selectFirst("a[href*='/en/'], a[href*='/dm']")
+                mainLink?.toMainPageResult()
+            }
             .distinctBy { it.url }
 
         return newMovieLoadResponse(title, url, TvType.NSFW, url) {
